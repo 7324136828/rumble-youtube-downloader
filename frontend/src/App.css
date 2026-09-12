@@ -1,0 +1,361 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: #f4f5f7;
+  color: #1c1e21;
+}
+
+.app {
+  min-height: 100vh;
+}
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #1c1e21;
+  color: #fff;
+}
+
+.brand {
+  font-weight: 600;
+  margin-right: 24px;
+}
+
+.nav-btn {
+  background: transparent;
+  border: none;
+  color: #b0b3b8;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.nav-btn.active,
+.nav-btn:hover {
+  background: #3a3b3c;
+  color: #fff;
+}
+
+.content {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 20px;
+}
+
+.muted {
+  color: #65676b;
+}
+
+.dropzone {
+  border: 2px dashed #bcc0c4;
+  border-radius: 10px;
+  padding: 16px;
+  background: #fff;
+  transition: border-color 0.15s;
+}
+
+.dropzone.dragging {
+  border-color: #1b74e4;
+  background: #eaf3ff;
+}
+
+.dropzone-hint {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #65676b;
+}
+
+.url-textarea {
+  width: 100%;
+  font-family: Consolas, monospace;
+  font-size: 13px;
+  padding: 10px;
+  border: 1px solid #ccd0d5;
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.url-count {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #65676b;
+  text-align: right;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #1b74e4;
+  cursor: pointer;
+  padding: 0;
+  font-size: inherit;
+}
+
+.options-panel {
+  margin: 16px 0;
+  background: #fff;
+  border: 1px solid #dddfe2;
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.options-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.options-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: #444;
+}
+
+.options-grid input,
+.options-grid select {
+  padding: 6px 8px;
+  border: 1px solid #ccd0d5;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.options-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 14px;
+  font-size: 13px;
+}
+
+.options-flags label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-primary {
+  margin-top: 12px;
+  background: #1b74e4;
+  color: #fff;
+  border: none;
+  padding: 10px 22px;
+  border-radius: 6px;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.btn-primary:disabled {
+  background: #9cc3f0;
+  cursor: not-allowed;
+}
+
+.job-status {
+  margin-top: 24px;
+  background: #fff;
+  border: 1px solid #dddfe2;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.job-status-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.job-name {
+  font-family: Consolas, monospace;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 480px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.badge {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge-queued { background: #e4e6eb; color: #444; }
+.badge-in_progress { background: #fff3cd; color: #856404; animation: pulse 1.2s infinite; }
+.badge-completed { background: #d4edda; color: #155724; }
+.badge-failed { background: #f8d7da; color: #721c24; }
+.badge-discarded { background: #e4e6eb; color: #65676b; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.progress-track {
+  height: 8px;
+  background: #e4e6eb;
+  border-radius: 4px;
+  margin: 14px 0 8px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #1b74e4;
+  transition: width 0.4s;
+}
+
+.stage-list {
+  display: flex;
+  gap: 18px;
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  font-size: 12px;
+  color: #9a9da1;
+}
+
+.stage.done { color: #155724; }
+.stage.current { color: #1b74e4; font-weight: 600; }
+
+.btn-download,
+.btn-continue,
+.btn-discard {
+  display: inline-block;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn-download { background: #1b74e4; color: #fff; }
+.btn-continue { background: #e7f3ff; color: #1b74e4; }
+.btn-discard { background: #f8d7da; color: #721c24; }
+
+.btn-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.download-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.btn-file {
+  display: inline-block;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn-transcript { background: #e7f3ff; color: #1b74e4; }
+.btn-audio { background: #e6f4ea; color: #137333; }
+.btn-video { background: #fce8e6; color: #c5221f; }
+.btn-other { background: #e4e6eb; color: #444; }
+.btn-zip { background: #f0f2f5; color: #65676b; }
+
+.error-banner {
+  background: #f8d7da;
+  color: #721c24;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.log-viewer {
+  margin-top: 10px;
+  background: #1c1e21;
+  color: #d8dade;
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 12px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.jobs-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.jobs-table th,
+.jobs-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e4e6eb;
+  font-size: 13px;
+}
+
+.jobs-table th {
+  background: #f0f2f5;
+  font-weight: 600;
+}
+
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.video-card {
+  background: #fff;
+  border: 1px solid #dddfe2;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.video-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 8px;
+}
+
+.video-card-job {
+  font-size: 12px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-player {
+  width: 100%;
+  border-radius: 6px;
+  background: #000;
+}
