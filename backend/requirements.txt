@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+yt-dlp[default,curl-cffi]>=2024.8.6
+openai-whisper>=20231117
+silero-vad>=5.1
