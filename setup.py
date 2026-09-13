@@ -29,6 +29,14 @@ def check_prerequisites():
 
 
 def create_virtualenv():
+    if (
+        sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+        or os.environ.get("VIRTUAL_ENV")
+        or os.environ.get("CONDA_PREFIX")
+    ):
+        log(f"Using active Python environment at {sys.prefix}...")
+        return Path(sys.executable)
+
     log(f"Configuring Python virtual environment at {VENV_DIR}...")
     if not VENV_DIR.exists():
         import venv
