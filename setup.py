@@ -35,18 +35,20 @@ def create_virtualenv():
         venv.create(VENV_DIR, with_pip=True)
 
     if os.name == "nt":
-        pip_bin = VENV_DIR / "Scripts" / "pip.exe"
+        python_bin = VENV_DIR / "Scripts" / "python.exe"
     else:
-        pip_bin = VENV_DIR / "bin" / "pip"
-    return pip_bin
+        python_bin = VENV_DIR / "bin" / "python"
+    return python_bin
 
 
-def install_backend(pip_bin):
+def install_backend(python_bin):
     log("Installing backend dependencies...")
-    subprocess.check_call([str(pip_bin), "install", "--upgrade", "pip"])
+    # Invoke pip as a module so it can safely upgrade itself on Windows.
+    pip_cmd = [str(python_bin), "-m", "pip"]
+    subprocess.check_call([*pip_cmd, "install", "--upgrade", "pip"])
     req_file = BACKEND_DIR / "requirements.txt"
     if req_file.exists():
-        subprocess.check_call([str(pip_bin), "install", "-r", str(req_file)])
+        subprocess.check_call([*pip_cmd, "install", "-r", str(req_file)])
 
 
 def install_frontend():
@@ -66,8 +68,8 @@ def setup_env():
 
 def main():
     check_prerequisites()
-    pip_bin = create_virtualenv()
-    install_backend(pip_bin)
+    python_bin = create_virtualenv()
+    install_backend(python_bin)
     install_frontend()
     setup_env()
     log("Setup completed successfully! Use run.bat (Windows) or ./run.sh (Unix) to start.")
