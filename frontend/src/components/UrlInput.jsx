@@ -7,7 +7,7 @@ export function extractUrls(text) {
   return [...new Set(found.map((u) => u.replace(/[.,;]+$/, '')))];
 }
 
-export default function UrlInput({ urls, onChange }) {
+export default function UrlInput({ urls, onChange, hint }) {
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef(null);
 
@@ -47,15 +47,19 @@ export default function UrlInput({ urls, onChange }) {
       onDrop={handleDrop}
     >
       <p className="dropzone-hint">
-        Paste URLs below (Ctrl+V), drop a url.json / .txt file here, or{' '}
-        <button
-          type="button"
-          className="link-btn"
-          onClick={() => fileRef.current?.click()}
-        >
-          browse for a file
-        </button>
-        .
+        {hint ?? (
+          <>
+            Paste URLs below (Ctrl+V), drop a url.json / .txt file here, or{' '}
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => fileRef.current?.click()}
+            >
+              browse for a file
+            </button>
+            .
+          </>
+        )}
       </p>
       <input
         ref={fileRef}

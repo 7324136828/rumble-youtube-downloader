@@ -1,0 +1,161 @@
+﻿.cf-feed-page, .cf-watch-page { padding: 34px 40px 38px; color: #f5f4f6; }
+.cf-view-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 30px; }
+.cf-eyebrow { color: #91909d; font-size: 10px; font-weight: 700; letter-spacing: 1.8px; }
+.cf-view-heading h1 { margin: 9px 0 7px; font-size: 34px; font-weight: 650; line-height: 1.15; letter-spacing: -1.3px; }
+.cf-heading-dot { color: #ff4866; }
+.cf-view-heading p { margin: 0; color: #8e8c99; font-size: 13px; }
+.cf-mode-switch { display: inline-flex; align-items: center; padding: 4px; border: 1px solid #2b2a32; background: #18171e; border-radius: 10px; flex-shrink: 0; }
+.cf-mode-switch button { display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; background: transparent; color: #878491; padding: 9px 16px; font: inherit; font-size: 12px; font-weight: 600; border-radius: 7px; cursor: pointer; }
+.cf-mode-switch button.active { color: #fff; background: #32303b; box-shadow: 0 2px 4px #0002; }
+.cf-mode-switch button:hover:not(.active) { color: #eeedf2; }
+.cf-view-state { display: flex; min-height: 440px; padding: 60px 28px; align-items: center; justify-content: center; flex-direction: column; text-align: center; border: 1px solid #28262f; border-radius: 16px; background: radial-gradient(ellipse at 50% 22%, #28202955, transparent 62%), #15141b; }
+.cf-view-state h2 { margin: 18px 0 10px; font-size: 25px; letter-spacing: -.8px; font-weight: 600; }
+.cf-view-state p { max-width: 425px; font-size: 13px; line-height: 1.8; color: #9693a1; margin: 0 0 25px; overflow-wrap: anywhere; }
+.cf-view-state .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 9px; }
+.cf-state-icon { width: 72px; height: 72px; border-radius: 20px; display: grid; place-items: center; color: #ff6b84; background: #ff486610; border: 1px solid #ff486626; margin-bottom: 18px; }
+.cf-empty-caption { color: #615f6c; font-size: 11px; margin-top: 17px; }
+.cf-empty-stack { width: 132px; height: 166px; position: relative; margin: 0 0 35px; }
+.cf-empty-stack > div { position: absolute; width: 114px; height: 155px; border-radius: 15px; border: 1px solid #3c333f; background: #25202c; left: 9px; top: 3px; transform: rotate(-13deg); }
+.cf-empty-stack > div:nth-child(2) { transform: rotate(11deg); background: #352631; }
+.cf-empty-stack > div:last-child { transform: rotate(0); background: linear-gradient(140deg,#332534,#1c1926); border-color: #5a3b4a; display: flex; gap: 16px; flex-direction: column; align-items: center; justify-content: center; color: #ff6d84; box-shadow: 0 14px 40px #0004; }
+.cf-empty-stack span { font-size: 8px; letter-spacing: .7px; color: #a89aaa; }
+.cf-loading-ring { width: 26px; height: 26px; border: 2px solid #34313d; border-top-color: #ff4866; border-radius: 50%; animation: cf-spin .9s linear infinite; margin-bottom: 20px; }
+@keyframes cf-spin { to { transform: rotate(360deg); } }
+.cf-view-toast { position: fixed; z-index: 90; bottom: 32px; left: 50%; transform: translateX(-50%); max-width: min(460px, 85vw); padding: 13px 19px; background: #36313d; border: 1px solid #514554; border-radius: 10px; box-shadow: 0 8px 32px #0006; font-size: 12px; color: #fff; text-align: center; }
+.cf-feed-layout { position: relative; display: flex; align-items: center; justify-content: center; height: min(740px, calc(100dvh - 236px)); min-height: 390px; padding: 0 90px 27px 0; }
+.cf-feed-context { position: absolute; top: 9px; left: 0; color: #8e8a98; display: flex; align-items: center; gap: 7px; font-size: 10px; }
+.cf-feed-live-dot { height: 5px; width: 5px; border-radius: 50%; background: #7bbc9b; }
+.cf-feed-context strong { display: none; }
+.cf-feed-scroll { height: 100%; width: min(510px,100%); overflow-y: auto; overflow-x: hidden; scroll-snap-type: y mandatory; overscroll-behavior-y: contain; scrollbar-width: none; outline-offset: 5px; touch-action: pan-y; }
+.cf-feed-scroll::-webkit-scrollbar { display: none; }
+.cf-feed-item { height: 100%; width: 100%; flex: 0 0 100%; display: flex; justify-content: center; align-items: center; gap: 19px; scroll-snap-align: start; scroll-snap-stop: always; }
+.cf-feed-stage { height: 100%; max-width: calc(100% - 76px); aspect-ratio: 9/16; border-radius: 15px; overflow: hidden; background: #08080c; border: 1px solid #38323e; }
+.cf-feed-stage > * { height: 100%; }
+.cf-feed-placeholder { height: 100%; background: #121019; }
+.cf-feed-placeholder img { height: 100%; width: 100%; object-fit: contain; }
+.cf-feed-overlay { position: absolute; z-index: 2; left: 0; right: 0; bottom: 63px; padding: 52px 19px 13px; pointer-events: none; background: linear-gradient(transparent, #0009); }
+.cf-feed-overlay h2 { color: #fff; font-size: 17px; line-height: 1.4; letter-spacing: -.3px; margin: 10px 0 7px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 8px #0005; }
+.cf-feed-overlay p { font-size: 11px; color: #d2cdd6; margin: 0; }
+.cf-feed-overlay .connector-badge { font-size: 9px; padding: 3px 7px; }
+.cf-feed-actions { display: flex; flex-direction: column; gap: 17px; width: 54px; align-self: flex-end; padding-bottom: 30px; flex-shrink: 0; }
+.cf-feed-actions > button, .cf-feed-actions > a { display: flex; flex-direction: column; gap: 7px; align-items: center; background: none; border: 0; padding: 0; color: #c9c5d1; text-decoration: none; cursor: pointer; font: inherit; }
+.cf-feed-actions > button > span, .cf-feed-actions > a > span { display: grid; place-items: center; width: 45px; height: 45px; border: 1px solid #302c38; background: #201d27; border-radius: 50%; transition: background .15s, transform .15s; }
+.cf-feed-actions small { font-size: 9px; color: #898391; }
+.cf-feed-actions > button:hover > span, .cf-feed-actions > a:hover > span { background: #3b2c3a; transform: translateY(-2px); }
+.cf-feed-actions .is-liked { color: #ff4866; }
+.cf-feed-actions .is-liked svg { fill: #ff4866; }
+.cf-feed-actions .is-liked small { color: #ff758a; }
+.cf-feed-actions .cf-feed-delete { margin-top: 2px; }
+.cf-feed-actions .cf-feed-delete > span { width: 35px; height: 35px; color: #7b7283; border-color: transparent; background: transparent; }
+.cf-feed-actions > button:disabled { cursor: wait; opacity: .5; }
+.cf-feed-navigation { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.cf-feed-navigation button { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid #35303d; border-radius: 50%; background: #1e1b25; color: #c8c0d0; cursor: pointer; }
+.cf-feed-navigation button:hover:not(:disabled) { color: #fff; border-color: #716071; background: #332a38; }
+.cf-feed-navigation button:disabled { opacity: .3; cursor: default; }
+.cf-feed-navigation > span { width: 60px; text-align: center; color: #61596e; font-size: 9px; line-height: 1.6; margin-top: 6px; }
+.cf-feed-bottom-note { position: absolute; bottom: 0; color: #6d6578; font-size: 10px; display: flex; align-items: center; gap: 6px; padding-right: 75px; }
+.cf-feed-bottom-note kbd { display: inline-grid; place-items: center; min-width: 17px; height: 16px; background: #211c2a; border: 1px solid #302937; border-radius: 3px; font-size: 10px; color: #988da5; }
+.cf-watch-layout { display: grid; grid-template-columns: minmax(0, 1fr) 304px; gap: 28px; align-items: start; }
+.cf-watch-primary { min-width: 0; }
+.cf-watch-title-row { display: flex; align-items: center; gap: 12px; margin-top: 23px; }
+.cf-watch-saved { display: inline-flex; gap: 4px; color: #7e7688; font-size: 10px; }
+.cf-watch-title { font-size: 24px; line-height: 1.4; margin: 12px 0 20px; color: #eeebf2; letter-spacing: -.6px; font-weight: 600; overflow-wrap: anywhere; }
+.cf-watch-details { display: flex; align-items: center; gap: 10px; }
+.cf-creator-avatar { display: grid; place-items: center; flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%; font-size: 14px; color: #e49cac; background: #382631; border: 1px solid #503140; }
+.cf-creator-info { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.cf-creator-info strong { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-creator-info > span { color: #847b8f; font-size: 10px; }
+.cf-watch-feed-button { display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto; padding: 9px 12px; border: 1px solid #46333e; border-radius: 7px; background: #ff48660a; color: #f08da1; font-size: 11px; cursor: pointer; }
+.cf-watch-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 21px 0; margin-top: 4px; }
+.cf-watch-actions > button, .cf-watch-actions > a { display: flex; gap: 7px; align-items: center; justify-content: center; border: 1px solid #342c3a; border-radius: 8px; color: #beb5c8; background: #211c28; padding: 9px 13px; font: inherit; font-size: 11px; cursor: pointer; text-decoration: none; }
+.cf-watch-actions > button:hover, .cf-watch-actions > a:hover { background: #302536; color: #fff; }
+.cf-watch-actions > .is-liked { color: #ff6682; background: #ff486615; border-color: #ff486638; }
+.cf-watch-actions > .is-liked svg { fill: #ff6682; }
+.cf-watch-actions > .cf-watch-delete { margin-left: auto; background: transparent; color: #807486; border-color: transparent; }
+.cf-watch-actions > .cf-watch-delete:hover { color: #ff758b; }
+.cf-watch-actions > button:disabled { opacity: .5; cursor: wait; }
+.cf-watch-description { padding: 19px 20px; background: #1c1723; border: 1px solid #2d2635; border-radius: 10px; }
+.cf-description-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.cf-description-heading strong { font-size: 11px; font-weight: 600; color: #c9bfd3; }
+.cf-description-heading a { display: flex; gap: 5px; align-items: center; font-size: 10px; color: #8f829c; text-decoration: none; }
+.cf-description-heading a:hover { color: #f2ced9; }
+.cf-watch-description p { white-space: pre-wrap; color: #9789a3; font-size: 12px; line-height: 1.85; margin: 12px 0 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.cf-watch-description p.expanded { display: block; }
+.cf-watch-description > button { padding: 0; background: none; border: 0; font: inherit; font-size: 11px; font-weight: 600; color: #cab6d3; margin-top: 12px; cursor: pointer; }
+.cf-upnext-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cf-upnext-heading h3 { font-size: 15px; font-weight: 600; margin: 0; }
+.cf-upnext-heading h3 > span { color: #7d6f8a; font-size: 11px; font-weight: 400; margin-left: 6px; }
+.cf-autoplay-toggle { display: flex; align-items: center; gap: 8px; color: #8e819b; font-size: 10px; position: relative; cursor: pointer; }
+.cf-autoplay-toggle input { position: absolute; opacity: 0; right: 0; width: 28px; height: 17px; margin: 0; }
+.cf-autoplay-toggle > span { width: 28px; height: 16px; border-radius: 12px; background: #42384c; position: relative; transition: background .2s; }
+.cf-autoplay-toggle > span::after { content: ''; width: 10px; height: 10px; position: absolute; top: 3px; left: 3px; background: #e5dce8; border-radius: 50%; transition: transform .2s; }
+.cf-autoplay-toggle input:checked + span { background: #ff4866; }
+.cf-autoplay-toggle input:checked + span::after { transform: translateX(12px); background: #fff; }
+.cf-autoplay-toggle input:focus-visible + span { outline: 2px solid #fff; outline-offset: 3px; }
+.cf-upnext-subtitle { color: #766a82; font-size: 10px; margin: 10px 0 20px; }
+.cf-upnext-item { width: 100%; border: 0; background: transparent; padding: 0; display: flex; align-items: flex-start; gap: 11px; text-align: left; color: inherit; margin-bottom: 18px; cursor: pointer; font: inherit; }
+.cf-upnext-thumb { display: flex; align-items: center; justify-content: center; width: 126px; flex-shrink: 0; aspect-ratio: 16/10; overflow: hidden; background: linear-gradient(140deg,#2f223c,#1b1524); border: 1px solid #362a40; border-radius: 7px; position: relative; color: #755987; }
+.cf-upnext-thumb > img { width: 100%; height: 100%; object-fit: cover; transition: transform .2s; }
+.cf-upnext-item:hover img { transform: scale(1.05); }
+.cf-upnext-thumb > span { position: absolute; bottom: 4px; right: 4px; font-size: 9px; background: #000a; border-radius: 3px; padding: 2px 4px; color: #fff; }
+.cf-upnext-thumb > i { position: absolute; top: 5px; left: 5px; font-style: normal; font-size: 7px; letter-spacing: .6px; color: #fff; background: #ff4866; padding: 3px 5px; border-radius: 3px; font-weight: 600; }
+.cf-upnext-info { display: flex; flex-direction: column; min-width: 0; gap: 6px; padding: 3px 0; }
+.cf-upnext-info > strong { font-size: 12px; font-weight: 550; line-height: 1.45; color: #d7cadf; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cf-upnext-item:hover .cf-upnext-info > strong { color: #fff; }
+.cf-upnext-info > span { font-size: 10px; color: #8c7b99; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-upnext-info > small { color: #675874; font-size: 8px; }
+.cf-upnext-info > small > span { margin: 0 2px; }
+.cf-upnext-empty { padding: 38px 22px; border: 1px dashed #382a42; border-radius: 10px; text-align: center; color: #665173; }
+.cf-upnext-empty h4 { font-size: 12px; color: #b4a2c0; font-weight: 500; margin: 14px 0 7px; }
+.cf-upnext-empty p { font-size: 11px; color: #7d698d; }
+.cf-upnext-empty button { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 0; color: #da91a8; font-size: 11px; cursor: pointer; margin-top: 10px; }
+@media (max-width: 1250px) {
+  .cf-feed-context { top: -16px; font-size: 9px; }
+  .cf-watch-layout { grid-template-columns: minmax(0, 1fr) 264px; gap: 22px; }
+  .cf-upnext-thumb { width: 105px; }
+  .cf-feed-page, .cf-watch-page { padding: 28px; }
+}
+@media (max-width: 1000px) {
+  .cf-watch-layout { grid-template-columns: minmax(0, 1fr); }
+  .cf-watch-sidebar { border-top: 1px solid #34253f; padding-top: 24px; }
+  .cf-upnext-item { max-width: 580px; }
+  .cf-upnext-thumb { width: 150px; }
+  .cf-upnext-info > strong { font-size: 13px; }
+  .cf-feed-layout { padding-right: 48px; }
+  .cf-feed-navigation { right: -12px; }
+}
+@media (max-width: 680px) {
+  .cf-feed-page, .cf-watch-page { padding: 24px 18px; }
+  .cf-view-heading { gap: 12px; margin-bottom: 25px; }
+  .cf-view-heading h1 { font-size: 28px; }
+  .cf-view-heading p { font-size: 11px; }
+  .cf-eyebrow { font-size: 8px; letter-spacing: 1.1px; }
+  .cf-mode-switch button { font-size: 10px; padding: 8px 9px; gap: 5px; }
+  .cf-view-state { min-height: 440px; padding: 40px 21px; }
+  .cf-view-state h2 { font-size: 22px; }
+  .cf-feed-layout { padding: 0 0 24px; height: calc(100dvh - 242px); min-height: 350px; }
+  .cf-feed-scroll { width: 100%; }
+  .cf-feed-context { top: -16px; left: 1px; }
+  .cf-feed-context strong { display: inline; font-size: 9px; color: #b09cb9; }
+  .cf-feed-context strong span { color: #6e5a7c; }
+  .cf-feed-item { gap: 9px; }
+  .cf-feed-stage { max-width: calc(100% - 48px); border-radius: 12px; }
+  .cf-feed-actions { width: 38px; gap: 13px; padding-bottom: 16px; }
+  .cf-feed-actions > button > span, .cf-feed-actions > a > span { width: 35px; height: 35px; }
+  .cf-feed-actions > button > span svg, .cf-feed-actions > a > span svg { width: 18px; height: 18px; }
+  .cf-feed-actions small { font-size: 8px; }
+  .cf-feed-actions .cf-feed-delete > span { width: 26px; height: 26px; }
+  .cf-feed-navigation { display: none; }
+  .cf-feed-bottom-note { padding-right: 40px; font-size: 9px; }
+  .cf-feed-overlay { padding: 35px 13px 12px; bottom: 57px; }
+  .cf-feed-overlay h2 { font-size: 14px; -webkit-line-clamp: 2; }
+  .cf-feed-overlay p { font-size: 9px; }
+  .cf-watch-title { font-size: 20px; }
+  .cf-watch-feed-button { font-size: 10px; padding: 8px; }
+  .cf-watch-actions { gap: 6px; }
+  .cf-watch-actions > button, .cf-watch-actions > a { font-size: 10px; padding: 8px 10px; }
+  .cf-watch-description { padding: 16px; }
+  .cf-view-toast { bottom: 88px; }
+}
+@media (prefers-reduced-motion: reduce) { .cf-loading-ring { animation-duration: 2s; } .cf-feed-scroll { scroll-behavior: auto; } .cf-feed-actions > button > span, .cf-feed-actions > a > span, .cf-upnext-thumb img { transition: none; } }
+.cf-watch-primary > .cvp { border-radius: 12px; border: 1px solid #302936; }

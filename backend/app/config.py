@@ -16,5 +16,8 @@ JOBS_ROOT = Path(
     os.environ.get("JOBS_ROOT", "") or ""
 ) if os.environ.get("JOBS_ROOT") else None
 
+MEDIA_ROOT = Path(os.environ["MEDIA_ROOT"]).resolve() if os.environ.get("MEDIA_ROOT") else None
+MAX_CONCURRENT_DOWNLOADS = max(1, int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "2")))
+
 BACKEND_HOST = os.environ.get("BACKEND_HOST", "0.0.0.0")
 BACKEND_PORT = int(os.environ.get("BACKEND_PORT", "8000"))

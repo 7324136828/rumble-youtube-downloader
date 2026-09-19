@@ -2,6 +2,7 @@
 import json
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from .. import config
@@ -23,6 +24,28 @@ CREATE TABLE IF NOT EXISTS jobs (
     log_path TEXT,
     urls TEXT,
     params TEXT
+);
+CREATE TABLE IF NOT EXISTS videos (
+    id TEXT PRIMARY KEY,
+    source_url TEXT NOT NULL,
+    connector TEXT NOT NULL,
+    status TEXT NOT NULL,
+    progress INTEGER NOT NULL DEFAULT 0,
+    stage TEXT,
+    quality TEXT,
+    title TEXT,
+    uploader TEXT,
+    description TEXT,
+    duration REAL,
+    width INTEGER,
+    height INTEGER,
+    media_dir TEXT,
+    file_path TEXT,
+    file_size INTEGER,
+    thumbnail_path TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
 )
 """
 
@@ -31,16 +54,21 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _connect() -> sqlite3.Connection:
+@contextmanager
+def _connect():
     conn = sqlite3.connect(config.JOBS_DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
     config.JOBS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _LOCK, _connect() as conn:
-        conn.execute(_SCHEMA)
+        conn.executescript(_SCHEMA)
 
 
 def create_job(job_id, filename, file_size, temp_dir, urls, params) -> dict:
@@ -81,6 +109,61 @@ def fail_stale_jobs() -> None:
             "UPDATE jobs SET status = 'failed', error_message = ?, completed_at = ?"
             " WHERE status IN ('queued', 'in_progress')",
             ("Server restarted while the job was running.", _now()),
+        )
+
+
+def create_video(video_id, source_url, connector, quality, media_dir) -> dict:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "INSERT INTO videos (id, source_url, connector, status, progress,"
+            " quality, media_dir, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (video_id, source_url, connector, "queued", 0, quality,
+             str(media_dir), _now()),
+        )
+    return get_video(video_id)
+
+
+def update_video(video_id, **fields) -> None:
+    if not fields:
+        return
+    columns = ", ".join(f"{key} = ?" for key in fields)
+    values = [json.dumps(v) if isinstance(v, (dict, list)) else v for v in fields.values()]
+    with _LOCK, _connect() as conn:
+        conn.execute(f"UPDATE videos SET {columns} WHERE id = ?",
+                     (*values, video_id))
+
+
+def get_video(video_id) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT * FROM videos WHERE id = ?",
+                           (video_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_videos(status: str | None = None) -> list:
+    with _LOCK, _connect() as conn:
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM videos WHERE status = ?"
+                " ORDER BY created_at DESC", (status,)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM videos ORDER BY created_at DESC").fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_video(video_id) -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute("DELETE FROM videos WHERE id = ?", (video_id,))
+
+
+def fail_stale_videos() -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "UPDATE videos SET status = 'failed', error_message = ?,"
+            " completed_at = ?"
+            " WHERE status IN ('queued', 'downloading', 'processing')",
+            ("Server restarted while the download was running.", _now()),
         )
 
 
