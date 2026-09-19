@@ -1,6 +1,8 @@
 """FastAPI entrypoint and route declarations."""
 import json
+import logging
 import mimetypes
+import re
 import uuid
 from pathlib import Path
 from urllib.parse import quote
@@ -8,11 +10,13 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
-                               StreamingResponse)
+                               Response, StreamingResponse)
 
 from . import config
+from .connectors import registry
 from .schemas.job import ConvertRequest
-from .services import db, media, pipeline
+from .schemas.media import DownloadRequest, ResolveRequest
+from .services import db, library, media, pipeline
 from .utils import temp_manager
 
 app = FastAPI(title="Rumble/YouTube Conversion API")
@@ -29,9 +33,11 @@ app.add_middleware(
 def startup() -> None:
     db.init_db()
     db.fail_stale_jobs()
+    db.fail_stale_videos()
     if not config.DOWNLOADER_SCRIPT.is_file():
-        raise RuntimeError(
-            f"original-project script not found: {config.DOWNLOADER_SCRIPT}")
+        logging.getLogger(__name__).warning(
+            "original-project script not found: %s — /api/convert is disabled",
+            config.DOWNLOADER_SCRIPT)
 
 
 @app.get("/api/health")
@@ -41,6 +47,12 @@ def health():
 
 @app.post("/api/convert")
 def start_conversion(request: ConvertRequest):
+    if not config.DOWNLOADER_SCRIPT.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail=f"Legacy converter script not found at "
+                   f"{config.DOWNLOADER_SCRIPT}; the Convert feature is "
+                   f"unavailable.")
     urls = [u.strip() for u in request.urls if isinstance(u, str) and u.strip()]
     if not urls:
         raise HTTPException(status_code=400, detail="At least one URL is required.")
@@ -173,7 +185,7 @@ def _resolve_download(job: dict, file: str) -> Path:
         base = (Path(job["temp_dir"]) / "outputs").resolve()
         rel = file
     target = (base / rel).resolve()
-    if not str(target).startswith(str(base)) or not target.is_file():
+    if not target.is_relative_to(base) or not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     return target
 
@@ -222,7 +234,7 @@ def stream_video(job_id: str, file: str, request: Request):
         raise HTTPException(status_code=404, detail="Job not found")
     outputs = (Path(job["temp_dir"]) / "outputs").resolve()
     target = (outputs / file).resolve()
-    if (not str(target).startswith(str(outputs))
+    if (not target.is_relative_to(outputs)
             or not target.is_file()
             or target.suffix.lower() not in media.VIDEO_EXTS):
         raise HTTPException(status_code=404, detail="Video not found")
@@ -236,18 +248,8 @@ def stream_video(job_id: str, file: str, request: Request):
         raise HTTPException(status_code=415,
                             detail="Video could not be prepared for playback.")
 
-    size = stream_path.stat().st_size
-    start, end, status = media.parse_range(request.headers.get("range"), size)
-    length = end - start + 1
-    headers = {
-        "Accept-Ranges": "bytes",
-        "Content-Length": str(length),
-        "Content-Range": f"bytes {start}-{end}/{size}",
-    }
-    media_type = mimetypes.guess_type(stream_path.name)[0] or "video/mp4"
-    return StreamingResponse(
-        media.iter_file(stream_path, start, length),
-        status_code=status, headers=headers, media_type=media_type)
+    return _stream_response(stream_path, request)
+
 
 
 @app.get("/api/jobs/{job_id}/download-zip")
@@ -263,3 +265,112 @@ def download_zip(job_id: str):
     stem = Path(job["filename"] or "conversion").stem[:60] or "conversion"
     return FileResponse(path=zip_path, filename=f"{stem}_converted.zip",
                         media_type="application/zip")
+
+
+@app.get("/api/connectors")
+def list_connectors():
+    return registry.describe()
+
+
+@app.post("/api/resolve")
+def resolve_urls(request: ResolveRequest):
+    urls = [u.strip() for u in request.urls if isinstance(u, str) and u.strip()]
+    return [{"url": u,
+             "connector": (c.describe() if (c := registry.resolve(u)) else None)}
+            for u in urls]
+
+
+@app.post("/api/media")
+def start_downloads(request: DownloadRequest):
+    urls = []
+    for u in request.urls:
+        if isinstance(u, str) and u.strip() and u.strip() not in urls:
+            urls.append(u.strip())
+    if not urls:
+        raise HTTPException(status_code=400, detail="At least one URL is required.")
+    unsupported = [u for u in urls if registry.resolve(u) is None]
+    if unsupported:
+        raise HTTPException(status_code=400,
+                            detail=f"Unsupported URL(s): {', '.join(unsupported)}")
+    return [library.video_payload(library.start_download(u, request.quality))
+            for u in urls]
+
+
+@app.get("/api/media")
+def list_media(status: str | None = None):
+    return [library.video_payload(row) for row in db.list_videos(status)]
+
+
+@app.get("/api/media/{video_id}")
+def get_media(video_id: str):
+    row = db.get_video(video_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return library.video_payload(row)
+
+
+@app.delete("/api/media/{video_id}")
+def delete_media(video_id: str):
+    if not db.get_video(video_id):
+        raise HTTPException(status_code=404, detail="Video not found")
+    library.cancel_and_delete(video_id)
+    return {"id": video_id, "deleted": True}
+
+
+@app.get("/api/media/{video_id}/stream")
+def stream_media(video_id: str, request: Request):
+    row = db.get_video(video_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Video not found")
+    file_path = Path(row["file_path"]) if row.get("file_path") else None
+    if row["status"] != "ready" or not file_path or not file_path.is_file():
+        raise HTTPException(status_code=409, detail="Video is not ready")
+
+    return _stream_response(file_path, request)
+
+
+def _stream_response(file_path: Path, request: Request):
+    size = file_path.stat().st_size
+    start, end, status_code = media.parse_range(request.headers.get("range"), size)
+    headers = {"Accept-Ranges": "bytes"}
+    if status_code == 416:
+        headers["Content-Range"] = f"bytes */{size}"
+        return Response(status_code=416, headers=headers)
+    length = end - start + 1
+    headers["Content-Length"] = str(length)
+    if status_code == 206:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    media_type = mimetypes.guess_type(file_path.name)[0] or "video/mp4"
+    return StreamingResponse(
+        media.iter_file(file_path, start, length),
+        status_code=status_code, headers=headers, media_type=media_type)
+
+
+
+@app.get("/api/media/{video_id}/thumbnail")
+def media_thumbnail(video_id: str):
+    row = db.get_video(video_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Video not found")
+    thumb = Path(row["thumbnail_path"]) if row.get("thumbnail_path") else None
+    if not thumb or not thumb.is_file():
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+    media_type = mimetypes.guess_type(thumb.name)[0] or "image/jpeg"
+    return FileResponse(path=thumb, media_type=media_type)
+
+
+@app.get("/api/media/{video_id}/download")
+def download_media(video_id: str):
+    row = db.get_video(video_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Video not found")
+    file_path = Path(row["file_path"]) if row.get("file_path") else None
+    if row["status"] != "ready" or not file_path or not file_path.is_file():
+        raise HTTPException(status_code=409, detail="Video is not ready")
+    safe_title = re.sub(r"\s+", " ",
+                        re.sub(r"[^\w\s.-]", "", row.get("title") or "")
+                        ).strip()[:80] or "video"
+    filename = f"{safe_title}{file_path.suffix}"
+    media_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    return FileResponse(path=file_path, filename=filename,
+                        media_type=media_type)

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { requestVideoStream } from '../services/api';
+import CustomVideoPlayer from './CustomVideoPlayer';
 
 function formatSize(bytes) {
   if (!bytes) return '';
@@ -32,7 +33,7 @@ export default function VideoCard({ video }) {
       </div>
       {video.job_name && <div className="muted video-card-job">{video.job_name}</div>}
       {playing && ready ? (
-        <video controls preload="metadata" src={video.stream_url} className="video-player" />
+        <CustomVideoPlayer src={video.stream_url} title={video.name} autoPlay />
       ) : ready ? (
         <button className="btn-continue" onClick={() => setPlaying(true)}>
           Play

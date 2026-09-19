@@ -9,7 +9,7 @@ async function request(path, options = {}) {
     let detail = `Request failed (${response.status})`;
     try {
       const body = await response.json();
-      if (body.detail) detail = body.detail;
+      if (body.detail) detail = typeof body.detail === 'string' ? body.detail : Array.isArray(body.detail) ? body.detail.map((item) => item.msg || 'Invalid request').join('; ') : 'Invalid request';
     } catch {
       /* keep default detail */
     }
@@ -58,4 +58,34 @@ export function getAllVideos() {
 export async function requestVideoStream(streamUrl) {
   const response = await fetch(streamUrl, { headers: { Range: 'bytes=0-0' } });
   return response.status;
+}
+
+export function getConnectors() {
+  return request('/connectors');
+}
+
+export function resolveUrls(urls) {
+  return request('/resolve', {
+    method: 'POST',
+    body: JSON.stringify({ urls }),
+  });
+}
+
+export function startDownloads(urls, quality = 'best') {
+  return request('/media', {
+    method: 'POST',
+    body: JSON.stringify({ urls, quality }),
+  });
+}
+
+export function getMediaItems(status) {
+  return request(status ? `/media?status=${encodeURIComponent(status)}` : '/media');
+}
+
+export function getMediaItem(id) {
+  return request(`/media/${id}`);
+}
+
+export function deleteMedia(id) {
+  return request(`/media/${id}`, { method: 'DELETE' });
 }

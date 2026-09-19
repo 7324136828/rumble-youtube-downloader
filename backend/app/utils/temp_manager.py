@@ -12,6 +12,12 @@ def jobs_root() -> Path:
     return root
 
 
+def library_root() -> Path:
+    root = config.MEDIA_ROOT or (jobs_root() / "library")
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def create_job_dir(job_id: str) -> Path:
     job_dir = jobs_root() / job_id
     for sub in ("inputs", "work", "outputs", "archive"):
