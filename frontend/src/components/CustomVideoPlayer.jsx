@@ -29,7 +29,7 @@ function timeLabel(value) {
 const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
   src, poster, title = 'Video', autoPlay = false, active = true,
   muted: controlledMuted, onMutedChange, loop = false, variant = 'watch',
-  onEnded, onNext, onPrevious, onTimeUpdate, onLoadedMetadata, children,
+  onEnded, onNext, onPrevious, onTimeUpdate, onLoadedMetadata, formatErrorActions, children,
 }, forwardedRef) {
   const videoRef = useRef(null);
   const rootRef = useRef(null);
@@ -52,6 +52,7 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [pipAvailable, setPipAvailable] = useState(false);
+  const [pipActive, setPipActive] = useState(false);
   const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
   const isMuted = controlledMuted ?? internalMuted;
 
@@ -99,15 +100,40 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
   useEffect(() => {
     mounted.current = true;
     const video = videoRef.current;
-    setPipAvailable(Boolean(document.pictureInPictureEnabled && video?.requestPictureInPicture));
-    setFullscreenAvailable(Boolean(rootRef.current?.requestFullscreen && document.fullscreenEnabled));
+    const standardPip = Boolean(video?.requestPictureInPicture
+      && document.pictureInPictureEnabled !== false);
+    let webkitPip = false;
+    try {
+      webkitPip = Boolean(video?.webkitSetPresentationMode
+        && (!video.webkitSupportsPresentationMode
+          || video.webkitSupportsPresentationMode('picture-in-picture')));
+    } catch { /* Safari can reject capability checks before media is ready. */ }
+    setPipAvailable(standardPip || webkitPip);
+    setFullscreenAvailable(Boolean(
+      (rootRef.current?.requestFullscreen && document.fullscreenEnabled !== false)
+      || video?.webkitEnterFullscreen));
     const updateFullscreen = () => setFullscreen(document.fullscreenElement === rootRef.current);
+    const enterWebkitFullscreen = () => setFullscreen(true);
+    const leaveWebkitFullscreen = () => setFullscreen(false);
+    const enterPip = () => setPipActive(true);
+    const leavePip = () => setPipActive(false);
+    const updateWebkitPresentation = () => setPipActive(video?.webkitPresentationMode === 'picture-in-picture');
     document.addEventListener('fullscreenchange', updateFullscreen);
+    video?.addEventListener('webkitbeginfullscreen', enterWebkitFullscreen);
+    video?.addEventListener('webkitendfullscreen', leaveWebkitFullscreen);
+    video?.addEventListener('enterpictureinpicture', enterPip);
+    video?.addEventListener('leavepictureinpicture', leavePip);
+    video?.addEventListener('webkitpresentationmodechanged', updateWebkitPresentation);
     return () => {
       mounted.current = false;
       requestId.current += 1;
       clearTimeout(hideTimer.current);
       document.removeEventListener('fullscreenchange', updateFullscreen);
+      video?.removeEventListener('webkitbeginfullscreen', enterWebkitFullscreen);
+      video?.removeEventListener('webkitendfullscreen', leaveWebkitFullscreen);
+      video?.removeEventListener('enterpictureinpicture', enterPip);
+      video?.removeEventListener('leavepictureinpicture', leavePip);
+      video?.removeEventListener('webkitpresentationmodechanged', updateWebkitPresentation);
       video?.pause();
     };
   }, []);
@@ -119,6 +145,7 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
     setBuffered(0);
     setError('');
     setNotice('');
+    setPipActive(false);
     setPlaying(false);
     setBuffering(false);
     setVisible(true);
@@ -176,17 +203,25 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
   };
 
   const toggleFullscreen = async () => {
+    const video = videoRef.current;
     try {
       if (document.fullscreenElement === rootRef.current) await document.exitFullscreen();
-      else await rootRef.current?.requestFullscreen();
+      else if (rootRef.current?.requestFullscreen && document.fullscreenEnabled !== false) await rootRef.current.requestFullscreen();
+      else if (fullscreen && video?.webkitExitFullscreen) video.webkitExitFullscreen();
+      else if (video?.webkitEnterFullscreen) video.webkitEnterFullscreen();
+      else throw new Error('Fullscreen unavailable');
     } catch { setNotice('Fullscreen is unavailable in this browser.'); }
     revealControls();
   };
 
   const togglePip = async () => {
+    const video = videoRef.current;
     try {
-      if (document.pictureInPictureElement === videoRef.current) await document.exitPictureInPicture();
-      else await videoRef.current?.requestPictureInPicture();
+      if (document.pictureInPictureElement === video) await document.exitPictureInPicture();
+      else if (video?.requestPictureInPicture && document.pictureInPictureEnabled !== false) await video.requestPictureInPicture();
+      else if (video?.webkitSetPresentationMode) video.webkitSetPresentationMode(
+        video.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
+      else throw new Error('Picture-in-picture unavailable');
     } catch { setNotice('Picture-in-picture is unavailable for this video.'); }
   };
 
@@ -268,7 +303,7 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
       {buffering && !error && <div className="cvp-buffering" role="status" aria-label="Buffering video"><span /></div>}
       {children && <div className="cvp-overlay">{children}</div>}
       {notice && !error && <div className="cvp-notice" role="status">{notice}</div>}
-      {error && <div className="cvp-error" role="alert"><PlayerIcon name="alert" size={30} /><p>{error}</p><button type="button" className="cvp-retry" onClick={retry}><PlayerIcon name="retry" size={16} /> Try again</button></div>}
+      {error && <div className="cvp-error" role="alert"><PlayerIcon name="alert" size={30} /><p>{error}</p>{formatErrorActions}<button type="button" className="cvp-retry" onClick={retry}><PlayerIcon name="retry" size={16} /> Try again</button></div>}
       <div className="cvp-controls" aria-label="Playback controls" onPointerEnter={revealControls}>
         <input className="cvp-seek" type="range" min="0" max={duration || 1} step="0.1" value={Math.min(currentTime, duration || 1)} disabled={!duration || !active} onChange={(event) => seek(Number(event.target.value))} aria-label="Seek video" aria-valuetext={`${timeLabel(currentTime)} of ${timeLabel(duration)}`} style={{ '--cvp-progress': `${progress}%`, '--cvp-buffered': `${buffered}%` }} />
         <div className="cvp-control-row">
@@ -284,7 +319,7 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
           <select className="cvp-speed" aria-label="Playback speed" title="Playback speed" value={speed} onChange={(event) => { const rate = Number(event.target.value); if (videoRef.current) videoRef.current.playbackRate = rate; setSpeed(rate); }}>
             {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => <option key={rate} value={rate}>{rate}x</option>)}
           </select>
-          {pipAvailable && controlButton('Picture-in-picture', 'pip', togglePip, 'cvp-pip')}
+          {pipAvailable && controlButton(pipActive ? 'Exit picture-in-picture' : 'Picture-in-picture', 'pip', togglePip, 'cvp-pip')}
           {fullscreenAvailable && controlButton(fullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)', fullscreen ? 'collapse' : 'fullscreen', toggleFullscreen)}
         </div>
       </div>

@@ -124,6 +124,10 @@ adjusts volume in Watch and changes videos in the feed. Touch scrolling moves
 between feed items. Autoplay, programmatic volume, fullscreen, and picture-in-picture
 availability can differ between browsers and devices.
 
+Fullscreen and picture-in-picture controls use the standard browser APIs when
+available and fall back to Safari's native video presentation APIs on iPhone and
+iPad. Compact layouts keep both controls visible.
+
 The browser still decodes video using its media APIs; the in-page interface is
 custom-designed in `frontend/src/components/CustomVideoPlayer.jsx` and its CSS.
 
@@ -292,6 +296,9 @@ job output directories, and database connections close after each operation.
 | GET | `/api/media/{id}/stream` | Seekable playback; 409 until ready |
 | GET | `/api/media/{id}/thumbnail` | Thumbnail; 404 if unavailable |
 | GET | `/api/media/{id}/download` | File attachment; 409 until ready |
+| POST | `/api/media/{id}/conversions/{format}` | Start an on-demand `mp4` or `mp3` conversion |
+| GET | `/api/media/{id}/conversions/{format}/download` | Download a completed derived file |
+| GET | `/api/media/{id}/conversions/mp4/stream` | Seekable playback of a completed compatible MP4 |
 | POST | `/api/convert` | Create legacy job from `{urls, options}` |
 | GET | `/api/jobs` / `/api/jobs/{id}` | Legacy job list/detail, including files |
 | GET | `/api/jobs/{id}/logs` | Execution log |
@@ -303,7 +310,8 @@ job output directories, and database connections close after each operation.
 
 Media items expose `id`, `source_url`, `connector`, `status`, `progress`, `stage`,
 `quality`, available title/creator/duration/dimensions, timestamps, file size,
-`error_message`, `playback_warning`, `stream_url`, `thumbnail_url`, `download_url`, and `file_name`.
+`error_message`, `playback_warning`, `stream_url`, `thumbnail_url`, `download_url`,
+`file_name`, and persistent `conversions` state for MP4 and MP3 outputs.
 
 Routes include `#/library`, `#/library/add`, `#/search`, `#/recommendations`, `#/settings`, `#/feed`, `#/feed/<id>`, `#/watch`,
 `#/watch/<id>`, `#/liked`, `#/downloads`, `#/connectors`, `#/convert`,

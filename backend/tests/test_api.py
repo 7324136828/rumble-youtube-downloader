@@ -178,6 +178,38 @@ class MediaApiTest(unittest.TestCase):
         resp = self.client.get(f"/api/media/{row['id']}/stream")
         self.assertEqual(resp.status_code, 409)
 
+    def test_on_demand_conversion_api_reports_and_serves_completed_file(self):
+        self._register_fake()
+        response = self.client.post("/api/media", json={
+            "urls": ["https://fake.test/ok"]})
+        video_id = response.json()[0]["id"]
+        self.addCleanup(library.cancel_and_delete, video_id)
+        self.assertEqual(library.wait_for(video_id, 15)["status"], "ready")
+
+        def write_mp3(source, target, cancel):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"converted audio")
+            return True
+
+        with patch.object(library.media, "convert_to_mp3", side_effect=write_mp3):
+            response = self.client.post(
+                f"/api/media/{video_id}/conversions/mp3")
+            self.assertEqual(response.status_code, 200)
+            conversion = library.wait_for_conversion(video_id, "mp3", 5)
+        self.assertEqual(conversion["status"], "completed")
+        payload = self.client.get(f"/api/media/{video_id}").json()
+        self.assertEqual(payload["conversions"]["mp3"]["status"], "completed")
+
+        response = self.client.get(
+            f"/api/media/{video_id}/conversions/mp3/download")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "audio/mpeg")
+        self.assertEqual(response.content, b"converted audio")
+
+    def test_conversion_api_rejects_unknown_formats(self):
+        response = self.client.post("/api/media/missing/conversions/wav")
+        self.assertEqual(response.status_code, 400)
+
     def test_native_webm_stream_and_download_keep_original_bytes_and_mime(self):
         self._register_fake()
         with patch.object(db, "get_download_settings", return_value={

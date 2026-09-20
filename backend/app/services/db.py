@@ -48,6 +48,16 @@ CREATE TABLE IF NOT EXISTS videos (
     created_at TEXT NOT NULL,
     completed_at TEXT
 );
+CREATE TABLE IF NOT EXISTS media_conversions (
+    video_id TEXT NOT NULL,
+    format TEXT NOT NULL,
+    status TEXT NOT NULL,
+    output_path TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    PRIMARY KEY (video_id, format)
+);
 CREATE TABLE IF NOT EXISTS watch_history (
     video_id TEXT PRIMARY KEY,
     source_url TEXT NOT NULL,
@@ -218,7 +228,55 @@ def list_videos(status: str | None = None) -> list:
 
 def delete_video(video_id) -> None:
     with _LOCK, _connect() as conn:
+        conn.execute("DELETE FROM media_conversions WHERE video_id = ?", (video_id,))
         conn.execute("DELETE FROM videos WHERE id = ?", (video_id,))
+
+
+def upsert_media_conversion(video_id: str, output_format: str,
+                            status: str) -> dict:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "INSERT INTO media_conversions (video_id, format, status, created_at)"
+            " VALUES (?,?,?,?) ON CONFLICT(video_id, format) DO UPDATE SET"
+            " status=excluded.status, output_path=NULL, error_message=NULL,"
+            " completed_at=NULL, created_at=excluded.created_at",
+            (video_id, output_format, status, _now()),
+        )
+        row = conn.execute(
+            "SELECT * FROM media_conversions WHERE video_id = ? AND format = ?",
+            (video_id, output_format),
+        ).fetchone()
+    return dict(row)
+
+
+def update_media_conversion(video_id: str, output_format: str, **fields) -> None:
+    if not fields:
+        return
+    columns = ", ".join(f"{key} = ?" for key in fields)
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            f"UPDATE media_conversions SET {columns}"
+            " WHERE video_id = ? AND format = ?",
+            (*fields.values(), video_id, output_format),
+        )
+
+
+def get_media_conversion(video_id: str, output_format: str) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM media_conversions WHERE video_id = ? AND format = ?",
+            (video_id, output_format),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_media_conversions(video_id: str) -> list[dict]:
+    with _LOCK, _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM media_conversions WHERE video_id = ? ORDER BY format",
+            (video_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def record_watch(video_id: str, position_seconds: float, watched_seconds: float,
@@ -302,6 +360,11 @@ def fail_stale_videos() -> None:
             " completed_at = ?"
             " WHERE status IN ('queued', 'downloading', 'processing')",
             ("Server restarted while the download was running.", _now()),
+        )
+        conn.execute(
+            "UPDATE media_conversions SET status = 'failed', error_message = ?,"
+            " completed_at = ? WHERE status IN ('queued', 'converting')",
+            ("Server restarted while the conversion was running.", _now()),
         )
 
 

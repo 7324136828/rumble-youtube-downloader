@@ -91,6 +91,10 @@ export function getMediaItem(id) {
   return request(`/media/${id}`);
 }
 
+export function startMediaConversion(id, format) {
+  return request(`/media/${id}/conversions/${format}`, { method: 'POST' });
+}
+
 export function getDownloadSettings(signal) {
   return request('/settings/downloads', { signal });
 }

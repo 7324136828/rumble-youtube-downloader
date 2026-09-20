@@ -344,6 +344,51 @@ def get_media(video_id: str):
     return library.video_payload(row)
 
 
+@app.post("/api/media/{video_id}/conversions/{output_format}")
+def start_media_conversion(video_id: str, output_format: str):
+    try:
+        return library.start_conversion(video_id, output_format.lower())
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _conversion_file(video_id: str, output_format: str) -> tuple[dict, Path]:
+    if output_format not in ("mp4", "mp3"):
+        raise HTTPException(status_code=404, detail="Conversion not found")
+    video = db.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    conversion = db.get_media_conversion(video_id, output_format)
+    path = (Path(conversion["output_path"]) if conversion
+            and conversion.get("output_path") else None)
+    media_dir = Path(video["media_dir"]).resolve()
+    if (not conversion or conversion["status"] != "completed" or not path
+            or not path.is_file() or not path.resolve().is_relative_to(media_dir)):
+        raise HTTPException(status_code=409, detail="Conversion is not complete")
+    return video, path
+
+
+@app.get("/api/media/{video_id}/conversions/{output_format}/download")
+def download_media_conversion(video_id: str, output_format: str):
+    video, path = _conversion_file(video_id, output_format.lower())
+    safe_title = re.sub(r"\s+", " ",
+                        re.sub(r"[^\w\s.-]", "", video.get("title") or "")
+                        ).strip()[:80] or "video"
+    media_type = "video/mp4" if output_format.lower() == "mp4" else "audio/mpeg"
+    return FileResponse(path=path, filename=f"{safe_title}.{output_format.lower()}",
+                        media_type=media_type)
+
+
+@app.get("/api/media/{video_id}/conversions/mp4/stream")
+def stream_media_conversion(video_id: str, request: Request):
+    _, path = _conversion_file(video_id, "mp4")
+    return _stream_response(path, request)
+
+
 @app.delete("/api/media/{video_id}")
 def delete_media(video_id: str):
     if not db.get_video(video_id):

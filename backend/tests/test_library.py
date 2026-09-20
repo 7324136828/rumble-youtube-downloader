@@ -253,6 +253,46 @@ class LibraryTest(unittest.TestCase):
         self.assertIsNone(result["thumbnail_path"])
         library.cancel_and_delete(row["id"])
 
+    def test_on_demand_mp3_conversion_is_persisted_and_reused(self):
+        row = library.start_download("https://fake.test/ok")
+        result = library.wait_for(row["id"], 15)
+        self.assertEqual(result["status"], "ready")
+
+        def write_mp3(source, target, cancel):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"test mp3")
+            return True
+
+        with patch.object(library.media, "convert_to_mp3",
+                          side_effect=write_mp3) as convert:
+            started = library.start_conversion(row["id"], "mp3")
+            self.assertIn(started["status"], ("queued", "converting", "completed"))
+            conversion = library.wait_for_conversion(row["id"], "mp3", 5)
+            self.assertEqual(conversion["status"], "completed")
+            payload = library.video_payload(db.get_video(row["id"]))["conversions"]["mp3"]
+            self.assertEqual(payload["status"], "completed")
+            self.assertTrue(payload["download_url"].endswith("/conversions/mp3/download"))
+            library.start_conversion(row["id"], "mp3")
+            self.assertEqual(convert.call_count, 1)
+        library.cancel_and_delete(row["id"])
+
+    def test_failed_on_demand_conversion_can_be_retried(self):
+        row = library.start_download("https://fake.test/ok")
+        self.assertEqual(library.wait_for(row["id"], 15)["status"], "ready")
+        with patch.object(library.media, "convert_to_mp3", return_value=False):
+            library.start_conversion(row["id"], "mp3")
+            failed = library.wait_for_conversion(row["id"], "mp3", 5)
+        self.assertEqual(failed["status"], "failed")
+        self.assertIn("could not be converted", failed["error_message"])
+        with patch.object(library.media, "convert_to_mp3",
+                          side_effect=lambda source, target, cancel:
+                          (target.parent.mkdir(parents=True, exist_ok=True),
+                           target.write_bytes(b"retry"), True)[-1]):
+            library.start_conversion(row["id"], "mp3")
+            retried = library.wait_for_conversion(row["id"], "mp3", 5)
+        self.assertEqual(retried["status"], "completed")
+        library.cancel_and_delete(row["id"])
+
     def test_failed_download(self):
         row = library.start_download("https://fake.test/fail")
         result = library.wait_for(row["id"], 15)

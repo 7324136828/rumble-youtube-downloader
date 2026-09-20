@@ -4,6 +4,7 @@ import { connectorBadgeClass, connectorLabel, formatDuration, formatSize, loadLi
 import CustomVideoPlayer from './CustomVideoPlayer';
 import RecommendationPanel from './RecommendationPanel';
 import PlaybackWarning from './PlaybackWarning';
+import MediaConversionButtons from './MediaConversionButtons';
 import useWatchHistory from '../hooks/useWatchHistory';
 import Icon from './Icon';
 import './FeedWatch.css';
@@ -27,6 +28,7 @@ export default function WatchPage({ videoId, navigate }) {
   const [expanded, setExpanded] = useState(false);
   const [notice, setNotice] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [playbackSrc, setPlaybackSrc] = useState('');
   const playerRef = useRef(null);
   const noticeTimer = useRef(null);
   const lastSecond = useRef(-1);
@@ -46,7 +48,7 @@ export default function WatchPage({ videoId, navigate }) {
     });
     return () => { cancelled = true; };
   }, [videoId, retry]);
-  useEffect(() => { setExpanded(false); lastSecond.current = -1; }, [videoId]);
+  useEffect(() => { setExpanded(false); setPlaybackSrc(''); lastSecond.current = -1; }, [videoId]);
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
 
   const video = items ? (videoId ? items.find((item) => item.id === videoId) : items[0]) || null : undefined;
@@ -98,11 +100,11 @@ export default function WatchPage({ videoId, navigate }) {
         : <div className="cf-watch-layout">
           <div className="cf-watch-primary">
             <PlaybackWarning video={video} />
-            <CustomVideoPlayer ref={playerRef} key={video.id} src={video.stream_url} poster={video.thumbnail_url || undefined} title={video.title || video.file_name || 'Saved video'} autoPlay variant="watch" onNext={nextVideo ? () => openWatch(nextVideo.id) : undefined} onEnded={() => { rememberPosition(video.id, 0); if (autoplay && nextVideo) openWatch(nextVideo.id); }} onLoadedMetadata={(event) => { try { const time = Number(sessionStorage.getItem(`clipfeed.position.${video.id}`)); const element = event.currentTarget; if (Number.isFinite(time) && time > 0 && time < element.duration - 1) element.currentTime = time; } catch { /* Start at the beginning if storage is unavailable. */ } }} onTimeUpdate={(time) => { const second = Math.floor(time); if (lastSecond.current !== second) { lastSecond.current = second; rememberPosition(video.id, time); } }} />
+            <CustomVideoPlayer ref={playerRef} key={video.id} src={playbackSrc || video.conversions?.mp4?.stream_url || video.stream_url} poster={video.thumbnail_url || undefined} title={video.title || video.file_name || 'Saved video'} autoPlay variant="watch" formatErrorActions={<MediaConversionButtons video={video} onMp4Ready={setPlaybackSrc} />} onNext={nextVideo ? () => openWatch(nextVideo.id) : undefined} onEnded={() => { rememberPosition(video.id, 0); if (autoplay && nextVideo) openWatch(nextVideo.id); }} onLoadedMetadata={(event) => { try { const time = Number(sessionStorage.getItem(`clipfeed.position.${video.id}`)); const element = event.currentTarget; if (Number.isFinite(time) && time > 0 && time < element.duration - 1) element.currentTime = time; } catch { /* Start at the beginning if storage is unavailable. */ } }} onTimeUpdate={(time) => { const second = Math.floor(time); if (lastSecond.current !== second) { lastSecond.current = second; rememberPosition(video.id, time); } }} />
             <div className="cf-watch-title-row"><span className={connectorBadgeClass(video.connector)}>{connectorLabel(video.connector)}</span><span className="cf-watch-saved"><Icon name="check" size={13} /> Saved to your library</span></div>
             <h2 className="cf-watch-title">{video.title || video.file_name || 'Saved video'}</h2>
             <div className="cf-watch-details"><div className="cf-creator-avatar">{(video.uploader || connectorLabel(video.connector)).charAt(0).toUpperCase()}</div><div className="cf-creator-info"><strong>{video.uploader || connectorLabel(video.connector)}</strong><span>{[formatDuration(video.duration), video.width && video.height ? `${video.width} × ${video.height}` : '', formatSize(video.file_size)].filter(Boolean).join(' · ') || 'Downloaded video'}</span></div><button className="cf-watch-feed-button" onClick={openFeed}><Icon name="feed" size={16} /> Open in feed</button></div>
-            <div className="cf-watch-actions"><button className={likes.has(video.id) ? 'is-liked' : ''} aria-pressed={likes.has(video.id)} onClick={() => setLikes((previous) => toggleLike(previous, video.id))}><Icon name="heart" size={17} />{likes.has(video.id) ? 'Liked' : 'Like'}</button>{video.download_url && <a href={video.download_url} download><Icon name="download" size={17} /> Download</a>}<button onClick={copySource}><Icon name="link" size={17} /> Copy link</button><button className="cf-watch-delete" onClick={removeVideo} disabled={deleting} aria-label="Delete this video"><Icon name="trash" size={17} />{deleting ? 'Deleting...' : 'Delete'}</button></div>
+            <div className="cf-watch-actions"><button className={likes.has(video.id) ? 'is-liked' : ''} aria-pressed={likes.has(video.id)} onClick={() => setLikes((previous) => toggleLike(previous, video.id))}><Icon name="heart" size={17} />{likes.has(video.id) ? 'Liked' : 'Like'}</button>{video.download_url && <a href={video.download_url} download><Icon name="download" size={17} /> Download</a>}<MediaConversionButtons video={video} formats={['mp3']} compact /><button onClick={copySource}><Icon name="link" size={17} /> Copy link</button><button className="cf-watch-delete" onClick={removeVideo} disabled={deleting} aria-label="Delete this video"><Icon name="trash" size={17} />{deleting ? 'Deleting...' : 'Delete'}</button></div>
             <div className="cf-watch-description"><div className="cf-description-heading"><strong>About this video</strong>{video.source_url && <a href={video.source_url} target="_blank" rel="noopener noreferrer">View original <Icon name="external" size={13} /></a>}</div><p className={expanded ? 'expanded' : ''}>{video.description || 'Saved from ' + connectorLabel(video.connector) + ' to your personal library.'}</p>{video.description?.length > 220 && <button onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>{expanded ? 'Show less' : 'Show more'}</button>}</div>
           </div>
           <aside className="cf-watch-sidebar"><RecommendationPanel context="watch" videoId={video.id} excludeUrls={video.source_url ? [video.source_url] : []} navigate={navigate} onReady={recommendationReady} /><div className="cf-upnext-heading"><h3>Up next <span>{upnext.length}</span></h3><label className="cf-autoplay-toggle">Autoplay<input type="checkbox" checked={autoplay} onChange={toggleAutoplay} /><span aria-hidden="true" /></label></div><div className="cf-upnext-subtitle">More from your collection</div>{upnext.length ? upnext.map((item, index) => <UpNextItem key={item.id} video={item} onOpen={openWatch} first={index === 0 && Boolean(nextVideo)} />) : <div className="cf-upnext-empty"><Icon name="library" size={28} /><h4>Room for another favorite.</h4><p>Add more videos to keep watching.</p><button onClick={() => navigate('library')}><Icon name="plus" size={15} /> Add a video</button></div>}</aside>

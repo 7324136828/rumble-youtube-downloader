@@ -12,8 +12,10 @@ from ..utils import temp_manager
 from . import db, media
 
 _ACTIVE: dict[str, dict] = {}
+_CONVERSIONS: dict[tuple[str, str], dict] = {}
 _LOCK = threading.Lock()
 _SLOTS = threading.Semaphore(config.MAX_CONCURRENT_DOWNLOADS)
+_CONVERSION_FORMATS = {"mp4", "mp3"}
 
 
 def start_download(url: str, quality: str = "best") -> dict:
@@ -41,9 +43,15 @@ def start_download(url: str, quality: str = "best") -> dict:
 def cancel_and_delete(video_id: str) -> None:
     with _LOCK:
         entry = _ACTIVE.get(video_id)
+        conversions = [value for (item_id, _), value in _CONVERSIONS.items()
+                       if item_id == video_id]
     if entry:
         entry["cancel"].set()
         entry["thread"].join(timeout=2)
+    for conversion in conversions:
+        conversion["cancel"].set()
+    for conversion in conversions:
+        conversion["thread"].join(timeout=2)
     row = db.get_video(video_id)
     if row and row.get("media_dir"):
         media_dir = Path(row["media_dir"])
@@ -65,7 +73,111 @@ def video_payload(row: dict) -> dict:
     payload["download_url"] = f"/api/media/{video_id}/download"
     file_path = row.get("file_path")
     payload["file_name"] = Path(file_path).name if file_path else None
+    payload["conversions"] = {
+        output_format: conversion_payload(row["id"], output_format)
+        for output_format in sorted(_CONVERSION_FORMATS)
+    }
     return payload
+
+
+def conversion_payload(video_id: str, output_format: str) -> dict:
+    if output_format not in _CONVERSION_FORMATS:
+        raise ValueError("Unsupported conversion format")
+    row = db.get_media_conversion(video_id, output_format)
+    status = row["status"] if row else "idle"
+    output = Path(row["output_path"]) if row and row.get("output_path") else None
+    if status == "completed" and (not output or not output.is_file()):
+        status = "failed"
+    payload = {
+        "format": output_format,
+        "status": status,
+        "error_message": (row.get("error_message") if row else None),
+        "download_url": None,
+        "stream_url": None,
+    }
+    if status == "completed":
+        base = f"/api/media/{video_id}/conversions/{output_format}"
+        payload["download_url"] = f"{base}/download"
+        if output_format == "mp4":
+            payload["stream_url"] = f"{base}/stream"
+    return payload
+
+
+def start_conversion(video_id: str, output_format: str) -> dict:
+    if output_format not in _CONVERSION_FORMATS:
+        raise ValueError("Unsupported conversion format")
+    row = db.get_video(video_id)
+    source = Path(row["file_path"]) if row and row.get("file_path") else None
+    if not row:
+        raise LookupError("Video not found")
+    if row["status"] != "ready" or not source or not source.is_file():
+        raise RuntimeError("Video is not ready for conversion")
+
+    existing = db.get_media_conversion(video_id, output_format)
+    if existing and existing["status"] == "completed":
+        output = Path(existing["output_path"]) if existing.get("output_path") else None
+        if output and output.is_file():
+            return conversion_payload(video_id, output_format)
+
+    key = (video_id, output_format)
+    with _LOCK:
+        if key in _CONVERSIONS:
+            return conversion_payload(video_id, output_format)
+        db.upsert_media_conversion(video_id, output_format, "queued")
+        cancel = threading.Event()
+        thread = threading.Thread(
+            target=_run_conversion,
+            args=(video_id, output_format, source, Path(row["media_dir"]), cancel),
+            daemon=True,
+        )
+        _CONVERSIONS[key] = {"cancel": cancel, "thread": thread}
+        thread.start()
+    return conversion_payload(video_id, output_format)
+
+
+def wait_for_conversion(video_id: str, output_format: str,
+                        timeout: float) -> dict | None:
+    deadline = time.time() + timeout
+    row = db.get_media_conversion(video_id, output_format)
+    while time.time() < deadline:
+        if row is None or row["status"] in ("completed", "failed"):
+            return row
+        time.sleep(0.1)
+        row = db.get_media_conversion(video_id, output_format)
+    return row
+
+
+def _run_conversion(video_id: str, output_format: str, source: Path,
+                    media_dir: Path, cancel: threading.Event) -> None:
+    key = (video_id, output_format)
+    derived_dir = media_dir / "derived"
+    target = derived_dir / f"{output_format}.{output_format}"
+    staged = derived_dir / f".{output_format}.partial.{output_format}"
+    try:
+        db.update_media_conversion(video_id, output_format, status="converting")
+        staged.unlink(missing_ok=True)
+        converter = (media.convert_to_mp4 if output_format == "mp4"
+                     else media.convert_to_mp3)
+        if not converter(source, staged, cancel):
+            raise RuntimeError(f"The video could not be converted to {output_format.upper()}.")
+        if cancel.is_set():
+            raise InterruptedError("Conversion cancelled")
+        staged.replace(target)
+        db.update_media_conversion(
+            video_id, output_format, status="completed", output_path=str(target),
+            error_message=None, completed_at=datetime.now(timezone.utc).isoformat())
+    except InterruptedError:
+        staged.unlink(missing_ok=True)
+    except Exception as exc:
+        staged.unlink(missing_ok=True)
+        if not cancel.is_set():
+            db.update_media_conversion(
+                video_id, output_format, status="failed",
+                error_message=str(exc)[:2000],
+                completed_at=datetime.now(timezone.utc).isoformat())
+    finally:
+        with _LOCK:
+            _CONVERSIONS.pop(key, None)
 
 
 def wait_for(video_id: str, timeout: float) -> dict | None:

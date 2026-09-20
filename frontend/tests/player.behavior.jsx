@@ -15,10 +15,15 @@ let playCalls;
 let pauseCalls;
 let playBehavior;
 let fakeFullscreen;
+let fakePip;
 let fullscreenRequests;
+let pipRequests;
+let pipExits;
+let webkitFullscreenRequests;
+let webkitPresentationChanges;
 const state = new WeakMap();
 const mediaState = (video) => {
-  if (!state.has(video)) state.set(video, { paused: true, currentTime: 0, duration: NaN, volume: 1, muted: false, playbackRate: 1, error: null });
+  if (!state.has(video)) state.set(video, { paused: true, currentTime: 0, duration: NaN, volume: 1, muted: false, playbackRate: 1, error: null, webkitPresentationMode: 'inline', webkitDisplayingFullscreen: false });
   return state.get(video);
 };
 function fakeProperty(object, name, descriptor) {
@@ -42,8 +47,9 @@ fakeProperty(HTMLMediaElement.prototype, 'pause', { value() {
   if (!this.paused) { mediaState(this).paused = true; this.dispatchEvent(new Event('pause')); }
 } });
 fakeProperty(document, 'fullscreenEnabled', { value: true });
-fakeProperty(document, 'pictureInPictureEnabled', { value: false });
+fakeProperty(document, 'pictureInPictureEnabled', { value: true });
 fakeProperty(document, 'fullscreenElement', { get: () => fakeFullscreen });
+fakeProperty(document, 'pictureInPictureElement', { get: () => fakePip });
 fakeProperty(HTMLElement.prototype, 'requestFullscreen', { value: async function () {
   fullscreenRequests++;
   fakeFullscreen = this;
@@ -52,6 +58,38 @@ fakeProperty(HTMLElement.prototype, 'requestFullscreen', { value: async function
 fakeProperty(document, 'exitFullscreen', { value: async () => {
   fakeFullscreen = null;
   document.dispatchEvent(new Event('fullscreenchange'));
+} });
+fakeProperty(HTMLVideoElement.prototype, 'requestPictureInPicture', { value: async function () {
+  pipRequests++;
+  fakePip = this;
+  this.dispatchEvent(new Event('enterpictureinpicture'));
+} });
+fakeProperty(document, 'exitPictureInPicture', { value: async () => {
+  pipExits++;
+  const video = fakePip;
+  fakePip = null;
+  video?.dispatchEvent(new Event('leavepictureinpicture'));
+} });
+fakeProperty(HTMLVideoElement.prototype, 'webkitPresentationMode', {
+  get() { return mediaState(this).webkitPresentationMode; },
+});
+fakeProperty(HTMLVideoElement.prototype, 'webkitDisplayingFullscreen', {
+  get() { return mediaState(this).webkitDisplayingFullscreen; },
+});
+fakeProperty(HTMLVideoElement.prototype, 'webkitSupportsPresentationMode', { value(mode) { return mode === 'picture-in-picture'; } });
+fakeProperty(HTMLVideoElement.prototype, 'webkitSetPresentationMode', { value(mode) {
+  webkitPresentationChanges++;
+  mediaState(this).webkitPresentationMode = mode;
+  this.dispatchEvent(new Event('webkitpresentationmodechanged'));
+} });
+fakeProperty(HTMLVideoElement.prototype, 'webkitEnterFullscreen', { value() {
+  webkitFullscreenRequests++;
+  mediaState(this).webkitDisplayingFullscreen = true;
+  this.dispatchEvent(new Event('webkitbeginfullscreen'));
+} });
+fakeProperty(HTMLVideoElement.prototype, 'webkitExitFullscreen', { value() {
+  mediaState(this).webkitDisplayingFullscreen = false;
+  this.dispatchEvent(new Event('webkitendfullscreen'));
 } });
 
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
@@ -84,8 +122,8 @@ async function input(element, value) {
   await event(element, element instanceof HTMLSelectElement ? 'change' : 'input');
 }
 async function test(name, body) {
-  playCalls = pauseCalls = fullscreenRequests = 0;
-  fakeFullscreen = null;
+  playCalls = pauseCalls = fullscreenRequests = pipRequests = pipExits = webkitFullscreenRequests = webkitPresentationChanges = 0;
+  fakeFullscreen = fakePip = null;
   playBehavior = successfulPlay;
   props = { src: undefined, title: 'Test video' };
   root = createRoot(host);
@@ -235,11 +273,46 @@ await test('Fullscreen requests the custom player wrapper and follows exit event
   assert(button('Fullscreen (F)'), 'Control resets after fullscreen exit');
 });
 
-await test('Media errors provide accessible retry and recover when retried', async () => {
+await test('Picture-in-picture enters and exits through the standard browser API', async () => {
   await render();
+  await click(button('Picture-in-picture'));
+  equal(pipRequests, 1, 'Picture-in-picture requested');
+  equal(fakePip, lastVideo, 'Current video entered picture-in-picture');
+  await click(button('Exit picture-in-picture'));
+  equal(pipExits, 1, 'Picture-in-picture exited');
+  equal(fakePip, null, 'Picture-in-picture element cleared');
+});
+
+await test('iPhone WebKit fallbacks support fullscreen and picture-in-picture', async () => {
+  const fullscreenDescriptor = Object.getOwnPropertyDescriptor(document, 'fullscreenEnabled');
+  const pipDescriptor = Object.getOwnPropertyDescriptor(document, 'pictureInPictureEnabled');
+  Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, value: false });
+  Object.defineProperty(document, 'pictureInPictureEnabled', { configurable: true, value: false });
+  try {
+    await render();
+    await click(button('Fullscreen (F)'));
+    equal(webkitFullscreenRequests, 1, 'WebKit fullscreen requested');
+    await click(button('Exit fullscreen (F)'));
+    equal(lastVideo.webkitDisplayingFullscreen, false, 'WebKit fullscreen exited');
+    await click(button('Picture-in-picture'));
+    equal(webkitPresentationChanges, 1, 'WebKit picture-in-picture requested');
+    equal(lastVideo.webkitPresentationMode, 'picture-in-picture', 'WebKit presentation mode entered');
+    await click(button('Exit picture-in-picture'));
+    equal(lastVideo.webkitPresentationMode, 'inline', 'WebKit presentation mode exited');
+  } finally {
+    Object.defineProperty(document, 'fullscreenEnabled', fullscreenDescriptor);
+    Object.defineProperty(document, 'pictureInPictureEnabled', pipDescriptor);
+  }
+});
+
+await test('Media errors provide accessible retry and recover when retried', async () => {
+  let conversions = 0;
+  await render({ formatErrorActions: <button type="button" onClick={() => conversions++}>Convert to MP4</button> });
   mediaState(lastVideo).error = { code: 4 };
   await event(lastVideo, 'error');
   assert(find('[role="alert"]').textContent.includes('format'), 'Format error explanation');
+  await click(find('.cvp-error button:not(.cvp-retry)'));
+  equal(conversions, 1, 'Format recovery action is available inside the error');
   await click(find('.cvp-retry'));
   equal(host.querySelector('[role="alert"]'), null, 'Retry clears error');
   equal(lastVideo.paused, false, 'Retry requests playback');

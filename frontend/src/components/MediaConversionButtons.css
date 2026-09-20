@@ -1,0 +1,13 @@
+.media-conversion-actions { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; }
+.media-conversion-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 8px 12px; border: 1px solid #4b4353; border-radius: 7px; background: #29232f; color: #eee8f2; font: inherit; font-size: 11px; line-height: 1.2; text-decoration: none; cursor: pointer; }
+.media-conversion-button:hover { border-color: #74677e; background: #352d3c; color: #fff; }
+.media-conversion-button:focus-visible { outline: 2px solid #ff4866; outline-offset: 2px; }
+.media-conversion-button.is-working { color: #dbc083; cursor: wait; opacity: .85; }
+.media-conversion-button.is-working svg { animation: media-conversion-spin 1s linear infinite; }
+.media-conversion-button.is-complete { border-color: #4e9b68; background: #193524; color: #9be2b3; }
+.media-conversion-button.is-complete:hover { background: #21472f; color: #c6f5d5; }
+.media-conversion-error { flex-basis: 100%; color: #ff9dad; font-size: 10px; line-height: 1.4; text-align: center; }
+.media-conversion-actions--compact { display: inline-flex; justify-content: flex-start; }
+.media-conversion-actions--compact .media-conversion-button { min-height: 35px; }
+@keyframes media-conversion-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .media-conversion-button.is-working svg { animation: none; } }
