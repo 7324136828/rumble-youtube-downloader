@@ -1,6 +1,7 @@
 import React from 'react';
 
 const paths = {
+  info: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM12 11v6M12 7v.1',
   play: 'm9 5 11 7-11 7V5Z', pause: 'M8 5v14M16 5v14',
   feed: 'M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 5 5 4-5 4V8Z',
   watch: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm6 4 6 4-6 4V8Z',

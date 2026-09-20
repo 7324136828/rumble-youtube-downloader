@@ -1,7 +1,10 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { deleteMedia, getMediaItems } from '../services/api';
 import { connectorBadgeClass, connectorLabel, formatDuration, formatSize, loadLikes, saveLikes, setPlayerMode, toggleLike } from '../mediaUtils';
 import CustomVideoPlayer from './CustomVideoPlayer';
+import RecommendationPanel from './RecommendationPanel';
+import PlaybackWarning from './PlaybackWarning';
+import useWatchHistory from '../hooks/useWatchHistory';
 import Icon from './Icon';
 import './FeedWatch.css';
 
@@ -27,6 +30,11 @@ export default function WatchPage({ videoId, navigate }) {
   const playerRef = useRef(null);
   const noticeTimer = useRef(null);
   const lastSecond = useRef(-1);
+  const getPlayer = useCallback(() => playerRef.current, []);
+  const recommendationReady = useCallback((media) => {
+    if (media?.status !== 'ready') return;
+    setItems((previous) => previous?.some((item) => item.id === media.id) ? previous.map((item) => item.id === media.id ? media : item) : [...previous || [], media]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,6 +50,7 @@ export default function WatchPage({ videoId, navigate }) {
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
 
   const video = items ? (videoId ? items.find((item) => item.id === videoId) : items[0]) || null : undefined;
+  useWatchHistory(video?.id, getPlayer, !error);
   const currentIndex = video ? items.findIndex((item) => item.id === video.id) : -1;
   const upnext = video ? [...items.slice(currentIndex + 1), ...items.slice(0, currentIndex)] : [];
   const nextVideo = items?.[currentIndex + 1];
@@ -88,6 +97,7 @@ export default function WatchPage({ videoId, navigate }) {
         : video === null ? <div className="cf-view-state"><div className="cf-state-icon"><Icon name="watch" size={32} /></div><div className="cf-eyebrow">YOUR FRONT ROW SEAT</div><h2>{videoId ? 'This video is not ready to watch.' : 'Something worth watching starts here.'}</h2><p>{videoId ? 'It may still be downloading or may have been removed. Check your library for its status.' : 'Add videos to your library, then enjoy them in a player made for you.'}</p><button className="btn-primary" onClick={() => navigate('library')}><Icon name={videoId ? 'library' : 'plus'} size={17} />{videoId ? 'Open library' : 'Add your first video'}</button></div>
         : <div className="cf-watch-layout">
           <div className="cf-watch-primary">
+            <PlaybackWarning video={video} />
             <CustomVideoPlayer ref={playerRef} key={video.id} src={video.stream_url} poster={video.thumbnail_url || undefined} title={video.title || video.file_name || 'Saved video'} autoPlay variant="watch" onNext={nextVideo ? () => openWatch(nextVideo.id) : undefined} onEnded={() => { rememberPosition(video.id, 0); if (autoplay && nextVideo) openWatch(nextVideo.id); }} onLoadedMetadata={(event) => { try { const time = Number(sessionStorage.getItem(`clipfeed.position.${video.id}`)); const element = event.currentTarget; if (Number.isFinite(time) && time > 0 && time < element.duration - 1) element.currentTime = time; } catch { /* Start at the beginning if storage is unavailable. */ } }} onTimeUpdate={(time) => { const second = Math.floor(time); if (lastSecond.current !== second) { lastSecond.current = second; rememberPosition(video.id, time); } }} />
             <div className="cf-watch-title-row"><span className={connectorBadgeClass(video.connector)}>{connectorLabel(video.connector)}</span><span className="cf-watch-saved"><Icon name="check" size={13} /> Saved to your library</span></div>
             <h2 className="cf-watch-title">{video.title || video.file_name || 'Saved video'}</h2>
@@ -95,8 +105,9 @@ export default function WatchPage({ videoId, navigate }) {
             <div className="cf-watch-actions"><button className={likes.has(video.id) ? 'is-liked' : ''} aria-pressed={likes.has(video.id)} onClick={() => setLikes((previous) => toggleLike(previous, video.id))}><Icon name="heart" size={17} />{likes.has(video.id) ? 'Liked' : 'Like'}</button>{video.download_url && <a href={video.download_url} download><Icon name="download" size={17} /> Download</a>}<button onClick={copySource}><Icon name="link" size={17} /> Copy link</button><button className="cf-watch-delete" onClick={removeVideo} disabled={deleting} aria-label="Delete this video"><Icon name="trash" size={17} />{deleting ? 'Deleting...' : 'Delete'}</button></div>
             <div className="cf-watch-description"><div className="cf-description-heading"><strong>About this video</strong>{video.source_url && <a href={video.source_url} target="_blank" rel="noopener noreferrer">View original <Icon name="external" size={13} /></a>}</div><p className={expanded ? 'expanded' : ''}>{video.description || 'Saved from ' + connectorLabel(video.connector) + ' to your personal library.'}</p>{video.description?.length > 220 && <button onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>{expanded ? 'Show less' : 'Show more'}</button>}</div>
           </div>
-          <aside className="cf-watch-sidebar"><div className="cf-upnext-heading"><h3>Up next <span>{upnext.length}</span></h3><label className="cf-autoplay-toggle">Autoplay<input type="checkbox" checked={autoplay} onChange={toggleAutoplay} /><span aria-hidden="true" /></label></div><div className="cf-upnext-subtitle">More from your collection</div>{upnext.length ? upnext.map((item, index) => <UpNextItem key={item.id} video={item} onOpen={openWatch} first={index === 0 && Boolean(nextVideo)} />) : <div className="cf-upnext-empty"><Icon name="library" size={28} /><h4>Room for another favorite.</h4><p>Add more videos to keep watching.</p><button onClick={() => navigate('library')}><Icon name="plus" size={15} /> Add a video</button></div>}</aside>
+          <aside className="cf-watch-sidebar"><RecommendationPanel context="watch" videoId={video.id} excludeUrls={video.source_url ? [video.source_url] : []} navigate={navigate} onReady={recommendationReady} /><div className="cf-upnext-heading"><h3>Up next <span>{upnext.length}</span></h3><label className="cf-autoplay-toggle">Autoplay<input type="checkbox" checked={autoplay} onChange={toggleAutoplay} /><span aria-hidden="true" /></label></div><div className="cf-upnext-subtitle">More from your collection</div>{upnext.length ? upnext.map((item, index) => <UpNextItem key={item.id} video={item} onOpen={openWatch} first={index === 0 && Boolean(nextVideo)} />) : <div className="cf-upnext-empty"><Icon name="library" size={28} /><h4>Room for another favorite.</h4><p>Add more videos to keep watching.</p><button onClick={() => navigate('library')}><Icon name="plus" size={15} /> Add a video</button></div>}</aside>
         </div>}
+      {!error && video === null && !items?.length && <RecommendationPanel context="watch" videoId={null} navigate={navigate} onReady={recommendationReady} />}
       {notice && <div className="cf-view-toast" role="status">{notice}</div>}
     </section>
   );

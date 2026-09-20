@@ -2,6 +2,9 @@
 import { deleteMedia, getMediaItems } from '../services/api';
 import { connectorBadgeClass, connectorLabel, formatDuration, loadLikes, saveLikes, setPlayerMode, toggleLike } from '../mediaUtils';
 import CustomVideoPlayer from './CustomVideoPlayer';
+import RecommendationPanel from './RecommendationPanel';
+import PlaybackWarning from './PlaybackWarning';
+import useWatchHistory from '../hooks/useWatchHistory';
 import Icon from './Icon';
 import './FeedWatch.css';
 
@@ -22,6 +25,7 @@ export default function FeedPage({ videoId, navigate }) {
   const [videos, setVideos] = useState(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const [loadedRevision, setLoadedRevision] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
   const [muted, setMuted] = useState(readMuted);
   const [likes, setLikes] = useState(loadLikes);
@@ -36,6 +40,11 @@ export default function FeedPage({ videoId, navigate }) {
   const noticeTimer = useRef(null);
   videosRef.current = videos || [];
   activeRef.current = activeIndex;
+  const getActivePlayer = useCallback((id) => videoRefs.current.get(id), []);
+  const recommendationReady = useCallback((media) => {
+    if (media?.status !== 'ready') return;
+    setVideos((previous) => previous?.some((video) => video.id === media.id) ? previous.map((video) => video.id === media.id ? media : video) : [...previous || [], media]);
+  }, []);
 
   const showNotice = useCallback((message) => {
     setNotice(message);
@@ -57,18 +66,18 @@ export default function FeedPage({ videoId, navigate }) {
     let cancelled = false;
     setError('');
     getMediaItems('ready').then((items) => {
-      if (!cancelled) setVideos(items);
+      if (!cancelled) { setVideos(items); setLoadedRevision((value) => value + 1); }
     }).catch((err) => {
       if (!cancelled) setError(err.message || 'The video library could not be loaded.');
     });
     return () => { cancelled = true; };
-  }, [retry]);
+  }, [videoId, retry]);
   useEffect(() => {
     if (!videos?.length) return;
     const index = videoId ? videos.findIndex((video) => video.id === videoId) : 0;
     goTo(index >= 0 ? index : 0, false);
     if (videoId && index < 0) showNotice('That video is unavailable. Here is the rest of your feed.');
-  }, [videoId, Boolean(videos?.length), goTo, showNotice]);
+  }, [videoId, loadedRevision, Boolean(videos?.length), goTo, showNotice]);
   useEffect(() => {
     if (videos && activeIndex >= videos.length) goTo(Math.max(0, videos.length - 1), false);
   }, [videos, activeIndex, goTo]);
@@ -152,12 +161,14 @@ export default function FeedPage({ videoId, navigate }) {
     finally { setDeleting(null); }
   };
   const activeVideo = videos?.[activeIndex];
+  useWatchHistory(activeVideo?.id, getActivePlayer, !error);
   return (
     <section className="cf-feed-page">
       <header className="cf-view-heading">
         <div><div className="cf-eyebrow">YOUR PERSONAL CHANNEL</div><h1>The feed<span className="cf-heading-dot">.</span></h1><p>Your saved videos. One swipe away.</p></div>
         <div className="cf-mode-switch" aria-label="Player view"><button className="active" aria-pressed="true"><Icon name="feed" size={17} /> Feed</button><button aria-pressed="false" onClick={() => activeVideo ? openWatch(activeVideo) : navigate('watch')}><Icon name="watch" size={17} /> Watch</button></div>
       </header>
+      {!error && <PlaybackWarning video={activeVideo} />}
       {error ? <div className="cf-view-state" role="alert"><div className="cf-state-icon"><Icon name="refresh" size={30} /></div><h2>We couldn't load your feed</h2><p>{error}</p><button className="btn-primary" onClick={() => setRetry((value) => value + 1)}><Icon name="refresh" size={16} /> Try again</button></div>
         : videos === null ? <div className="cf-view-state" role="status"><span className="cf-loading-ring" /><p>Getting your feed ready...</p></div>
         : !videos.length ? <div className="cf-view-state cf-feed-empty-state"><div className="cf-empty-stack" aria-hidden="true"><div /><div /><div><Icon name="play" size={34} /><span>Your next favorite</span></div></div><div className="cf-eyebrow">A FEED THAT'S ALL YOURS</div><h2>Start with a video you love.</h2><p>Save a video from YouTube, Rumble, or another supported platform. Then swipe through your own collection.</p><button className="btn-primary" onClick={() => navigate('library')}><Icon name="plus" size={17} /> Add your first video</button><span className="cf-empty-caption">Your collection, your pace.</span></div>
@@ -186,6 +197,7 @@ export default function FeedPage({ videoId, navigate }) {
           <div className="cf-feed-navigation"><button onClick={() => goTo(activeIndex - 1)} disabled={activeIndex === 0} aria-label="Previous video"><Icon name="chevronUp" size={24} /></button><button onClick={() => goTo(activeIndex + 1)} disabled={activeIndex === videos.length - 1} aria-label="Next video"><Icon name="chevronDown" size={24} /></button><span>Scroll to explore</span></div>
           <div className="cf-feed-bottom-note"><Icon name="feed" size={14} /> Swipe or use <kbd>↑</kbd> <kbd>↓</kbd> to explore</div>
         </div>}
+      {!error && videos !== null && (!videos.length || activeIndex === videos.length - 1) && <RecommendationPanel context="feed" videoId={activeVideo?.id || null} excludeUrls={activeVideo?.source_url ? [activeVideo.source_url] : []} navigate={navigate} onReady={recommendationReady} />}
       {notice && <div className="cf-view-toast" role="status">{notice}</div>}
     </section>
   );

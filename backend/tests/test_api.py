@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -25,6 +26,7 @@ from app.services import db, library  # noqa: E402
 
 FIXTURE_DIR = Path(tempfile.mkdtemp())
 FIXTURE_MP4 = FIXTURE_DIR / "fixture.mp4"
+FIXTURE_WEBM = Path(__file__).resolve().parents[2] / "frontend/tests/player.fixture.webm"
 
 
 class FakeConnector(Connector):
@@ -48,8 +50,9 @@ class FakeConnector(Connector):
                     on_progress(10, "downloading")
                 time.sleep(0.05)
             raise ConnectorCancelled()
-        target = dest_dir / "fake.mp4"
-        shutil.copy(FIXTURE_MP4, target)
+        source = FIXTURE_WEBM if "webm" in url else FIXTURE_MP4
+        target = dest_dir / f"fake{source.suffix}"
+        shutil.copy(source, target)
         if on_progress:
             on_progress(50, "downloading")
         return DownloadResult(
@@ -174,6 +177,38 @@ class MediaApiTest(unittest.TestCase):
                               "best", tempfile.mkdtemp())
         resp = self.client.get(f"/api/media/{row['id']}/stream")
         self.assertEqual(resp.status_code, 409)
+
+    def test_native_webm_stream_and_download_keep_original_bytes_and_mime(self):
+        self._register_fake()
+        with patch.object(db, "get_download_settings", return_value={
+                "convert_for_browser": False, "generate_thumbnails": False}), \
+                patch.object(library.media, "convert_to_mp4") as convert, \
+                patch("app.main.mimetypes.guess_type", return_value=("video/mp4", None)):
+            resp = self.client.post("/api/media", json={
+                "urls": ["https://fake.test/native.webm"]})
+            self.assertEqual(resp.status_code, 200)
+            video_id = resp.json()[0]["id"]
+            self.addCleanup(library.cancel_and_delete, video_id)
+            result = library.wait_for(video_id, 15)
+            self.assertEqual(result["status"], "ready", result["error_message"])
+            expected = FIXTURE_WEBM.read_bytes()
+            for endpoint in ("stream", "download"):
+                with self.subTest(endpoint=endpoint):
+                    response = self.client.get(f"/api/media/{video_id}/{endpoint}")
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.headers["content-type"], "video/webm")
+                    self.assertEqual(response.content, expected)
+            self.assertIn(".webm", response.headers["content-disposition"])
+
+            response = self.client.get(f"/api/media/{video_id}/stream",
+                                       headers={"Range": "bytes=8-31"})
+            self.assertEqual(response.status_code, 206)
+            self.assertEqual(response.headers["content-type"], "video/webm")
+            self.assertEqual(response.headers["content-range"],
+                             f"bytes 8-31/{len(expected)}")
+            self.assertEqual(response.headers["accept-ranges"], "bytes")
+            self.assertEqual(response.content, expected[8:32])
+            convert.assert_not_called()
 
     def test_convert_unavailable(self):
         if config.DOWNLOADER_SCRIPT.is_file():

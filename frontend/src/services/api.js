@@ -78,6 +78,11 @@ export function startDownloads(urls, quality = 'best') {
   });
 }
 
+export function searchVideos(query, source = 'all', signal) {
+  const params = new URLSearchParams({ q: query, source, limit: '12' });
+  return request(`/search?${params}`, { signal });
+}
+
 export function getMediaItems(status) {
   return request(status ? `/media?status=${encodeURIComponent(status)}` : '/media');
 }
@@ -86,6 +91,55 @@ export function getMediaItem(id) {
   return request(`/media/${id}`);
 }
 
+export function getDownloadSettings(signal) {
+  return request('/settings/downloads', { signal });
+}
+
+export function updateDownloadSettings(settings) {
+  return request('/settings/downloads', {
+    method: 'PATCH',
+    body: JSON.stringify(settings),
+  });
+}
+
 export function deleteMedia(id) {
   return request(`/media/${id}`, { method: 'DELETE' });
+}
+
+export function recordWatchHistory(videoId, { positionSeconds, watchedSeconds, completed = false }, { keepalive = false } = {}) {
+  return request('/watch-history', {
+    method: 'POST',
+    keepalive,
+    body: JSON.stringify({ video_id: videoId, position_seconds: positionSeconds, watched_seconds: watchedSeconds, completed }),
+  });
+}
+
+export function getRecommendationSettings(signal) {
+  return request('/recommendations/settings', { signal });
+}
+
+export function updateRecommendationSettings(settings) {
+  return request('/recommendations/settings', {
+    method: 'PATCH',
+    body: JSON.stringify(settings),
+  });
+}
+
+export function getRecommendationModels(signal) {
+  return request('/recommendations/models', { signal });
+}
+
+export function importRecommendationConfig(name, config) {
+  return request('/recommendations/configs', {
+    method: 'POST',
+    body: JSON.stringify({ name, config }),
+  });
+}
+
+export function getRecommendations(options, signal) {
+  return request('/recommendations', {
+    method: 'POST',
+    body: JSON.stringify(options),
+    signal,
+  });
 }

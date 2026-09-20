@@ -6,6 +6,8 @@ import subprocess
 import threading
 from pathlib import Path
 
+from . import db
+
 VIDEO_EXTS = {".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi"}
 PLAYABLE_EXTS = {".mp4", ".m4v", ".webm", ".mov"}
 
@@ -40,6 +42,8 @@ def stream_path_for(video: Path) -> Path:
 def video_state(job_dir: Path, video: Path) -> str:
     if stream_path_for(video).is_file():
         return "ready"
+    if video.is_file() and not db.get_download_settings()["convert_for_browser"]:
+        return "ready"
     with _LOCK:
         if stream_path_for(video) in _PREPARING:
             return "preparing"
@@ -52,6 +56,8 @@ def ensure_streamable(video: Path):
     if stream_path.is_file():
         return stream_path
     if video.suffix.lower() in PLAYABLE_EXTS:
+        return video if video.is_file() else None
+    if not db.get_download_settings()["convert_for_browser"]:
         return video if video.is_file() else None
     with _LOCK:
         if stream_path in _PREPARING:
@@ -85,12 +91,13 @@ def _mp4_codecs_supported(streams: list[dict]) -> bool:
 
 
 def is_browser_compatible(video: Path) -> bool:
+    """Recognize native browser formats; actual decoder support is browser-specific."""
     streams = probe_streams(video)
     if video.suffix.lower() in (".mp4", ".m4v"):
         return _mp4_codecs_supported(streams)
     if video.suffix.lower() == ".webm":
         return all(
-            s.get("codec_name") in ("vp8", "vp9")
+            s.get("codec_name") in ("vp8", "vp9", "av1")
             if s.get("codec_type") == "video"
             else s.get("codec_name") in ("opus", "vorbis")
             for s in streams if s.get("codec_type") in ("video", "audio"))
@@ -139,16 +146,28 @@ def convert_to_mp4(video: Path, target: Path, cancel=None) -> bool:
 
 
 def make_thumbnail(video: Path, target: Path) -> bool:
-    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
     for seek in ("1", "0"):
-        ok = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-             "-ss", seek, "-i", str(video), "-frames:v", "1",
-             "-vf", "scale=480:-2", "-pix_fmt", "yuvj420p", str(target)],
-        ).returncode == 0
+        try:
+            ok = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-ss", seek, "-i", str(video), "-frames:v", "1",
+                 "-vf", "scale=480:-2", "-pix_fmt", "yuvj420p", str(target)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=20,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            ok = False
         if ok and target.is_file():
             return True
-        target.unlink(missing_ok=True)
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            return False
     return False
 
 

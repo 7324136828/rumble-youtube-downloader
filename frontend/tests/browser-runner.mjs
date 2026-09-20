@@ -21,7 +21,45 @@ export async function runBrowserTests(pages) {
   const port = probe.address().port;
   await new Promise((done) => probe.close(done));
   const frontend = fileURLToPath(new URL('../', import.meta.url));
-  const server = await createServer({ configFile: false, root: frontend, plugins: [react()], optimizeDeps: { entries: pages.map((page) => `tests/${page}`) }, server: { host: '127.0.0.1', port, strictPort: true, hmr: false }, logLevel: 'error' });
+  let reportResult;
+  let activePage;
+  // A completion callback avoids Chromium's virtual media clock and inherited
+  // dump-DOM pipe handles preventing an otherwise finished test from exiting.
+  const reporter = {
+    name: 'browser-test-completion',
+    transformIndexHtml() {
+      return [{ tag: 'script', injectTo: 'body', children: `
+        (() => {
+          let reported = false;
+          const sendReport = window.fetch.bind(window);
+          const report = () => {
+            const status = document.body.dataset.testStatus;
+            if (reported || !['passed', 'failed'].includes(status)) return;
+            reported = true;
+            sendReport('/__browser-test-result', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ page: location.pathname.split('/').pop(), passed: status === 'passed',
+                report: document.getElementById('results')?.textContent || status }) });
+          };
+          new MutationObserver(report).observe(document.body, { attributes: true, attributeFilter: ['data-test-status'] });
+          report();
+        })();` }];
+    },
+    configureServer(vite) {
+      vite.middlewares.use('/__browser-test-result', (request, response) => {
+        if (request.method !== 'POST') { response.statusCode = 405; response.end(); return; }
+        let body = '';
+        request.on('data', (chunk) => { body += chunk; if (body.length > 65536) request.destroy(); });
+        request.on('end', () => {
+          try {
+            const result = JSON.parse(body);
+            if (result.page === activePage) reportResult?.(result);
+            response.end('ok');
+          } catch { response.statusCode = 400; response.end(); }
+        });
+      });
+    },
+  };
+  const server = await createServer({ configFile: false, root: frontend, plugins: [react(), reporter], optimizeDeps: { entries: pages.map((page) => `tests/${page}`) }, server: { host: '127.0.0.1', port, strictPort: true, hmr: false }, logLevel: 'error' });
   try {
     await server.listen();
     for (const page of pages) {
@@ -30,19 +68,31 @@ export async function runBrowserTests(pages) {
       let timeout;
       try {
         const url = `http://127.0.0.1:${port}/tests/${page}`;
-        child = spawn(browser, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`, '--dump-dom', '--virtual-time-budget=10000', url], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-        let output = '';
+        activePage = page;
+        const completed = new Promise((done) => { reportResult = done; });
+        const completePage = reportResult;
+        child = spawn(browser, ['--headless=new', '--disable-gpu', '--disable-extensions', '--disable-background-networking', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`, url], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
         let errorOutput = '';
-        child.stdout.on('data', (data) => { output += data; });
-        child.stderr.on('data', (data) => { errorOutput += data; });
-        timeout = setTimeout(() => child.kill(), 30000);
-        const exitCode = await new Promise((done, reject) => { child.once('error', reject); child.once('close', done); });
-        const report = output.match(/<pre id="results"[^>]*>([\s\S]*?)<\/pre>/)?.[1];
-        console.log(`${page}:\n${report || output || errorOutput}`);
-        if (exitCode !== 0 || !output.includes('data-test-status="passed"')) process.exitCode = 1;
+        child.stderr.on('data', (data) => { errorOutput = `${errorOutput}${data}`.slice(-4000); });
+        child.once('error', (error) => completePage({ passed: false, report: error.message }));
+        child.once('exit', (code) => completePage({ passed: false, report: `Browser exited early (${code}).\n${errorOutput}` }));
+        timeout = setTimeout(() => completePage({ passed: false, report: `Browser tests timed out.\n${errorOutput}` }), 30000);
+        const result = await completed;
+        console.log(`${page}:\n${result.report}`);
+        if (result.passed !== true) process.exitCode = 1;
       } finally {
         clearTimeout(timeout);
-        child?.kill();
+        reportResult = () => {};
+        // Only terminate the isolated browser process tree launched above.
+        if (child?.pid && process.platform === 'win32') {
+          await new Promise((done) => {
+            const stop = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+            const stopTimeout = setTimeout(() => { stop.kill(); child.kill(); done(); }, 5000);
+            const stopped = () => { clearTimeout(stopTimeout); done(); };
+            stop.once('close', stopped);
+            stop.once('error', () => { child.kill(); stopped(); });
+          });
+        } else child?.kill();
         // Remove only the temporary directory created above, never an existing profile.
         const resolved = resolve(profile);
         if (resolved.startsWith(resolve(tmpdir()) + sep)) await rm(profile, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});

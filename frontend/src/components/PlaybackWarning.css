@@ -1,0 +1,4 @@
+.playback-warning { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0 20px; padding: 13px 16px; border: 1px solid #66512c; border-radius: 10px; color: #edc881; background: #2c2519; font-size: 12px; line-height: 1.7; }
+.playback-warning > svg { flex-shrink: 0; margin-top: 2px; }
+.playback-warning p { margin: 0; }
+.playback-warning a { color: #ffe0a9; text-decoration: underline; text-underline-offset: 3px; }

@@ -54,8 +54,8 @@ completed downloads.
 
 ## Using the app
 
-The default screen is **My library**. The sidebar also provides **Swipe feed**,
-**Watch**, **Liked videos**, **Downloads**, and **Connectors**. Legacy conversion,
+The default screen is **My library**. The sidebar also provides **Search videos**, **Swipe feed**,
+**Watch**, **Liked videos**, **Downloads**, **Recommendations**, **Settings**, and **Connectors**. Legacy conversion,
 conversion history, and converted-video tools remain under **More tools**.
 
 1. Paste one video URL per line in the library. Use Shift+Enter for another line.
@@ -64,6 +64,33 @@ conversion history, and converted-video tools remain under **More tools**.
    and offer retry or dismissal; active downloads can be cancelled.
 4. Open a completed video in Watch or Swipe. The selected player preference is
    remembered in your browser.
+
+To find videos without a link, use the search bar in **My library** or open
+**Search videos**. Enter keywords, choose YouTube, Rumble, or both, and select
+**Search**. Results show thumbnails, titles, creators, and durations when available.
+Select a download quality and **Add to library** to queue a result, or **Open
+original** to view it on its source site. Searching alone does not download videos.
+Search queries and platform choices stay in the page URL for refresh and back/forward
+navigation. The header's **Search your library** field filters saved videos.
+
+Online search requires internet access and uses public platform results without
+API keys. A platform failure displays a warning while keeping results from the other
+platform available; failed searches can be retried.
+
+For personalized suggestions, open **Recommendations**, select an active model
+configuration from The Connector or upload its `config.json`, and turn on
+**AI recommendations**. Add interests to start an empty library. The model uses
+local watch history to derive topics, search YouTube and Rumble, and choose an
+ordered playlist from verified results. Suggestions appear in an empty/end-of-list
+Swipe feed and alongside Watch's Up next list. Select **Play** for saved videos or
+**Download & play** for new ones. The header switch turns suggestions off anytime;
+they are off by default. See the [setup, algorithm, and tool contracts](docs/recommendations.md).
+
+**AI picks for you** appears beside the Watch player, with a reason for each
+suggestion and **Play** or **Download & play** actions. This screenshot uses the
+actual interface with demo recommendation data.
+
+![ClipFeed AI picks beside the Watch player, with recommendation reasons, Play, and Download & play buttons](docs/screenshots/clipfeed-ai-picks.png)
 
 The collection contains your downloaded videos, with real thumbnails and source
 metadata when available. Search titles, creators, and URLs; filter by platform;
@@ -164,11 +191,36 @@ moves through `queued`, `downloading`, `processing`, and `ready`, or ends as `fa
 with an error message. The API hides internal filesystem paths. An interrupted
 server restart marks unfinished downloads failed so they can be retried.
 
-The backend inspects actual video and audio codecs with ffprobe before marking a
-file ready. Compatible MP4/WebM videos can play directly; other supported files
-are remuxed or transcoded to H.264/AAC MP4 with fast-start metadata. This avoids
-assuming every file ending in `.mp4` can play in the browser. Preparation may take
-time for large or high-resolution videos and may change the downloaded encoding.
+The backend validates downloaded media with ffprobe and keeps the original format
+by default. WebM files stream directly to the custom Watch and Swipe players with
+`video/webm` and byte-range seeking. VP8, VP9, and AV1 video with Opus or Vorbis
+audio are recognized for native WebM playback. Actual decoding depends on the
+browser and device; see [WebM codec support](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Containers#webm).
+Playback does not automatically start MP4 conversion.
+
+Open **Settings** to control optional processing for new downloads:
+
+- **Convert downloads to MP4**: off by default. Explicitly enable this and save to
+  convert new non-MP4 downloads, including WebM, to H.264/AAC MP4. Compatible MP4
+  files pass through. Conversion may take time for large or high-resolution files.
+  With the switch off, formats outside the supported browser codec set retain
+  their original files and show a notice with an external-download link.
+- **Generate missing thumbnails**: turn off to skip creating a preview frame.
+  Thumbnails already supplied by the source are kept either way.
+
+Thumbnail generation defaults on. Click **Save settings** to persist choices in SQLite.
+Existing installations clear the old default-on conversion setting once, requiring
+a fresh opt-in; subsequent choices survive restarts. Thumbnail preferences remain.
+Downloads already queued or running keep their original settings. Combining
+separate source video/audio tracks remains necessary for a complete download.
+Legacy on-demand playback conversion also requires opt-in. Explicit conversion and
+transcription jobs under More tools keep their separate options.
+
+Downloads and recommendation buttons show the current preparation step, such as
+**Combining video and audio**, **Checking browser compatibility**, or **Converting
+for browser playback**. Processing uses an indeterminate progress indicator: the
+old fixed 92% was a stage marker, not measured conversion progress. A long 4K
+conversion can continue working for some time after the network transfer finishes.
 
 Streaming supports full responses, single byte ranges, suffix ranges, and proper
 206/416 responses for seeking. Queued cancellation prevents a download from
@@ -195,6 +247,15 @@ job output directories, and database connections close after each operation.
 | Method | Endpoint | Purpose |
 |---|---|---|
 | GET | `/api/connectors` | List connectors (`id`, `name`, `domains`) |
+| GET | `/api/search?q=&source=all&limit=12` | Search YouTube/Rumble metadata; `source` is `all`, `youtube`, or `rumble`; `limit` is 1–24 |
+| GET / POST | `/api/watch-history` | Read recent history or record actual playback |
+| GET / PATCH | `/api/settings/downloads` | Read/update `convert_for_browser` and `generate_thumbnails` for new downloads |
+| GET / PATCH | `/api/recommendations/settings` | Read/update enablement, selected model, and interests |
+| GET | `/api/recommendations/models` | Discover active Connector configurations |
+| POST | `/api/recommendations/configs` | Validate and import `{name, config}` into The Connector |
+| GET | `/api/recommendations/tools` | List metadata and keyword-search function schemas |
+| POST | `/api/recommendations/tools/{name}` | Invoke a search tool with `{arguments}` when enabled |
+| POST | `/api/recommendations` | Generate an ordered playlist for Feed or Watch |
 | POST | `/api/resolve` | Route `{urls}` to connectors; does not check download availability |
 | POST | `/api/media` | Start downloads with `{urls, quality}`; returns queued items |
 | GET | `/api/media` / `/api/media/{id}` | Library list (`?status=`) or item detail |
@@ -213,9 +274,9 @@ job output directories, and database connections close after each operation.
 
 Media items expose `id`, `source_url`, `connector`, `status`, `progress`, `stage`,
 `quality`, available title/creator/duration/dimensions, timestamps, file size,
-`error_message`, `stream_url`, `thumbnail_url`, `download_url`, and `file_name`.
+`error_message`, `playback_warning`, `stream_url`, `thumbnail_url`, `download_url`, and `file_name`.
 
-Routes include `#/library`, `#/library/add`, `#/feed`, `#/feed/<id>`, `#/watch`,
+Routes include `#/library`, `#/library/add`, `#/search`, `#/recommendations`, `#/settings`, `#/feed`, `#/feed/<id>`, `#/watch`,
 `#/watch/<id>`, `#/liked`, `#/downloads`, `#/connectors`, `#/convert`,
 `#/convert/<job-id>`, `#/history`, and `#/videos`.
 
@@ -223,15 +284,24 @@ Routes include `#/library`, `#/library/add`, `#/feed`, `#/feed/<id>`, `#/watch`,
 
 See `.env.example` for backend options: `BACKEND_HOST`, `BACKEND_PORT`,
 `ORIGINAL_PROJECT_DIR`, `JOBS_DB_PATH`, `JOBS_ROOT`, `MEDIA_ROOT`, and
-`MAX_CONCURRENT_DOWNLOADS`. The runner also accepts `FRONTEND_PORT` as its starting
+`MAX_CONCURRENT_DOWNLOADS`, and `RECOMMENDATION_CONNECTOR_URL` (default
+`http://127.0.0.1:8301`). The runner also accepts `FRONTEND_PORT` as its starting
 frontend port.
 
-The SQLite database defaults to `backend/jobs.db`. Legacy working folders default
-to the operating system's temporary directory under `prod_jobs`. The media library
-defaults to `prod_jobs/library` there. Set **`MEDIA_ROOT` to a durable directory**
-if downloaded videos should survive operating-system temporary-file cleanup.
-Back up that directory together with the SQLite database to preserve the library.
-The default download concurrency is two.
+Downloaded videos, SQLite metadata, and legacy working folders default to the
+operating system's temporary directory under `prod_jobs`. On Windows:
+
+- Videos and thumbnails: `%TEMP%\prod_jobs\library`
+- Database for jobs, videos, watch history, and app preferences: `%TEMP%\prod_jobs\jobs.db`
+- Legacy working folders: `%TEMP%\prod_jobs\<job-id>`
+
+`JOBS_ROOT` relocates this storage root; `MEDIA_ROOT` and `JOBS_DB_PATH` can override
+the media and database locations individually. Unset or empty values use the
+defaults. Files remain between app restarts but may be removed by system temporary
+file cleanup. Set `JOBS_ROOT` to a durable directory if you want permanent storage.
+For an existing installation, stop the app and move `backend/jobs.db` to the new
+database location before restarting to retain its library records (do not replace
+an existing destination database). The default download concurrency is two.
 
 ## Verification
 
@@ -242,19 +312,37 @@ From the repository root on Windows:
 npm.cmd --prefix frontend run build
 npm.cmd --prefix frontend run test:player
 npm.cmd --prefix frontend run test:app
+npm.cmd --prefix frontend run test:webm
 ```
 
 On Linux/macOS, use `.venv/bin/python` and `npm` in the same commands.
 Browser tests require Chrome, Edge, or Chromium installed locally. Set
 `PLAYER_TEST_BROWSER` to the executable path when it cannot be found automatically.
-The browser suites pass **32 checks** (14 player checks and 18 app/Feed/Watch
-checks). They run against isolated Vite servers and deterministic API/media
+The browser suites pass **66 checks**, covering player behavior, app navigation,
+Feed/Watch/search, watch history, recommendations, and download settings. They run against isolated
+Vite servers and deterministic API/media
 fixtures; they do not change your library or download external content.
+The `test:webm` suite uses real browser media APIs to decode, play, and seek local
+VP9/Opus and AV1/Opus WebM fixtures through `CustomVideoPlayer`; both passed in
+Chrome 153. Its fixture-generation commands are recorded in
+[`frontend/tests/native-webm.fixtures.md`](frontend/tests/native-webm.fixtures.md).
 
-The backend suite passes **30 offline tests**. It uses fake connectors and videos
+The backend suite passes **114 offline tests**. It uses fake connectors and videos
 generated locally with FFmpeg, covering connector routing, playlist rejection,
 queued/active cancellation, MP4 codec conversion, thumbnails, library persistence,
 API download-to-stream lifecycle, byte-range seeking, and legacy job behavior.
+Processing tests cover saved preferences, migration of existing library records,
+retaining original files when conversion is off, queued-job settings, optional
+thumbnails, and bounded thumbnail failures. Native playback tests cover AV1/VP9
+WebM files kept unchanged, explicit MP4 opt-in, MIME types, and byte-range responses.
+Search tests cover provider metadata, safe result URLs, query bounds, Rumble query
+encoding, HTTP error diagnostics, timeouts, empty results, and partial failures;
+browser checks also cover search-to-download
+actions and stale search responses.
+Recommendation tests cover model discovery/import, history-to-keywords-to-playlist
+generation, tool calling, verified candidates, round-robin search, settings races,
+cache reuse, and disabling pending requests. Model responses are mocked; no paid
+provider inference is part of the suite.
 It does not download videos from external platforms; live YouTube/Rumble extraction
 is not covered by this verification. Browser smoke checks also confirmed custom
 playback of existing saved YouTube, Rumble, and generic-source videos, plus
@@ -274,14 +362,16 @@ backend/
     main.py              FastAPI routes
     config.py            Environment settings
     connectors/          Connector contract, registry, platform implementations
-    services/            Download library, codec preparation, SQLite, legacy jobs
+    routers/             Recommendation settings, models, tools, and playlists
+    services/            Downloads, search, recommendations, SQLite, legacy jobs
     utils/               Working-directory lifecycle
     schemas/             API request models
   tests/                 Offline API, connector, library, and media regressions
 frontend/
   src/
     App.jsx              Sidebar, search, and route shell
-    components/          Library, custom players, feed, watch, and legacy screens
+    components/          Library, players, feed, watch, recommendation settings
+    hooks/               Playback-history tracking
     mediaUtils.js        Display helpers and browser-local preferences
 setup.py / setup.bat / setup.sh
 run.py / run.bat / run.sh
