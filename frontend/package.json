@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:player": "node tests/player.test.mjs",
-    "test:app": "node tests/app.test.mjs"
+    "test:app": "node tests/app.test.mjs",
+    "test:webm": "node tests/native-webm.test.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

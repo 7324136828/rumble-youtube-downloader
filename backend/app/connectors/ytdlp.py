@@ -25,7 +25,9 @@ class _ProgressTracker:
             raise yt_dlp.utils.DownloadCancelled("Cancelled by user")
         if d.get("postprocessor"):
             if self.files_done:
-                self._report(92, "processing")
+                processor = d["postprocessor"].lower()
+                stage = "merging" if "merger" in processor else "processing"
+                self._report(90, stage)
             return
         n = len(d.get("info_dict", {}).get("requested_formats") or [None])
         if d.get("status") == "downloading":

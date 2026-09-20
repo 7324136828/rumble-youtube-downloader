@@ -1,19 +1,18 @@
 """System temp directory lifecycle for isolated job execution."""
 import shutil
-import tempfile
 from pathlib import Path
 
 from .. import config
 
 
 def jobs_root() -> Path:
-    root = config.JOBS_ROOT or (Path(tempfile.gettempdir()) / "prod_jobs")
+    root = config.JOBS_ROOT
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
 def library_root() -> Path:
-    root = config.MEDIA_ROOT or (jobs_root() / "library")
+    root = config.MEDIA_ROOT
     root.mkdir(parents=True, exist_ok=True)
     return root
 

@@ -1,0 +1,22 @@
+.download-settings { max-width: 1120px; }
+.download-settings-card { max-width: 820px; padding: 28px; border: 1px solid #302936; border-radius: 18px; background: #1b1721; }
+.download-settings-heading { display: flex; align-items: flex-start; gap: 15px; margin-bottom: 10px; }
+.download-settings-heading > span { display: grid; place-items: center; flex: 0 0 45px; height: 45px; border-radius: 13px; background: #322138; color: #df98f3; }
+.download-settings-heading h2 { margin: 0 0 8px; font-size: 19px; }
+.download-settings-heading p, .download-setting-row p { margin: 0; color: #a59baa; font-size: 13px; line-height: 1.7; }
+.download-setting-row { display: flex; align-items: flex-start; gap: 26px; padding: 25px 0; border-bottom: 1px solid #302936; }
+.download-setting-row > div { flex: 1; min-width: 0; }
+.download-setting-row label { display: inline-block; margin-bottom: 9px; font-size: 14px; font-weight: 650; cursor: pointer; }
+.download-setting-row input { appearance: none; flex: 0 0 42px; width: 42px; height: 24px; margin: 0; padding: 3px; border: 1px solid #5e5268; border-radius: 99px; background: #302736; cursor: pointer; transition: background .15s; }
+.download-setting-row input::before { content: ''; display: block; width: 16px; height: 16px; border-radius: 50%; background: #c3b7cc; transition: transform .15s; }
+.download-setting-row input:checked { border-color: #b665d4; background: #a54fc6; }
+.download-setting-row input:checked::before { background: white; transform: translateX(17px); }
+.download-setting-row input:focus-visible { outline: 2px solid #ecb9fc; outline-offset: 4px; }
+.download-setting-row input:disabled { opacity: .5; cursor: wait; }
+.download-settings-note { color: #a59baa; font-size: 12px; line-height: 1.7; margin: 19px 0; }
+.download-settings-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.progress-track.progress-indeterminate { overflow: hidden; }
+.progress-indeterminate .progress-fill { width: 35%; animation: download-processing 1.8s ease-in-out infinite; }
+@keyframes download-processing { 0% { transform: translateX(-100%); } 100% { transform: translateX(290%); } }
+@media (max-width: 600px) { .download-settings-card { padding: 20px; } .download-setting-row { gap: 15px; } }
+@media (prefers-reduced-motion: reduce) { .progress-indeterminate .progress-fill { animation: none; width: 100%; opacity: .5; } .download-setting-row input, .download-setting-row input::before { transition: none; } }

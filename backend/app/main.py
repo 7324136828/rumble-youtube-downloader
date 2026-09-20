@@ -7,19 +7,25 @@ import uuid
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
                                Response, StreamingResponse)
 
 from . import config
 from .connectors import registry
+from .routers.recommendations import router as recommendations_router
+from .routers.settings import router as settings_router
 from .schemas.job import ConvertRequest
 from .schemas.media import DownloadRequest, ResolveRequest
-from .services import db, library, media, pipeline
+from .schemas.search import SearchResponse, SearchSource
+from .schemas.watch_history import WatchEvent
+from .services import db, library, media, pipeline, search
 from .utils import temp_manager
 
 app = FastAPI(title="Rumble/YouTube Conversion API")
+app.include_router(recommendations_router)
+app.include_router(settings_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,6 +49,22 @@ def startup() -> None:
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/watch-history")
+def watch_history(limit: int = Query(30, ge=1, le=100)):
+    return db.list_watch_history(limit)
+
+
+@app.post("/api/watch-history")
+def record_watch_history(event: WatchEvent):
+    try:
+        row = db.record_watch(**event.model_dump())
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"recorded": row is not None, "entry": row}
 
 
 @app.post("/api/convert")
@@ -272,6 +294,19 @@ def list_connectors():
     return registry.describe()
 
 
+@app.get("/api/search", response_model=SearchResponse)
+def search_platform_videos(q: str = Query(..., max_length=1000),
+                          source: SearchSource = "all",
+                          limit: int = Query(12, ge=1, le=24)):
+    query = q.strip()
+    if not 1 <= len(query) <= 200:
+        raise HTTPException(status_code=400, detail="Search must contain 1 to 200 characters.")
+    try:
+        return search.search_videos(query, source, limit)
+    except search.SearchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.post("/api/resolve")
 def resolve_urls(request: ResolveRequest):
     urls = [u.strip() for u in request.urls if isinstance(u, str) and u.strip()]
@@ -340,7 +375,8 @@ def _stream_response(file_path: Path, request: Request):
     headers["Content-Length"] = str(length)
     if status_code == 206:
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
-    media_type = mimetypes.guess_type(file_path.name)[0] or "video/mp4"
+    media_type = ("video/webm" if file_path.suffix.lower() == ".webm" else
+                  mimetypes.guess_type(file_path.name)[0] or "application/octet-stream")
     return StreamingResponse(
         media.iter_file(file_path, start, length),
         status_code=status_code, headers=headers, media_type=media_type)
@@ -371,6 +407,7 @@ def download_media(video_id: str):
                         re.sub(r"[^\w\s.-]", "", row.get("title") or "")
                         ).strip()[:80] or "video"
     filename = f"{safe_title}{file_path.suffix}"
-    media_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    media_type = ("video/webm" if file_path.suffix.lower() == ".webm" else
+                  mimetypes.guess_type(file_path.name)[0] or "application/octet-stream")
     return FileResponse(path=file_path, filename=filename,
                         media_type=media_type)

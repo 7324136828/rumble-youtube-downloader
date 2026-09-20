@@ -20,6 +20,8 @@ def start_download(url: str, quality: str = "best") -> dict:
     connector = registry.resolve(url)
     if connector is None:
         raise ValueError("No connector for URL")
+    # Queued jobs keep the choices made when they were added to the library.
+    settings = dict(db.get_download_settings())
     video_id = str(uuid.uuid4())
     media_dir = temp_manager.library_root() / video_id
     media_dir.mkdir(parents=True, exist_ok=True)
@@ -28,7 +30,7 @@ def start_download(url: str, quality: str = "best") -> dict:
     cancel = threading.Event()
     thread = threading.Thread(
         target=_run,
-        args=(video_id, url, quality, connector, media_dir, cancel),
+        args=(video_id, url, quality, connector, media_dir, cancel, settings),
         daemon=True)
     with _LOCK:
         _ACTIVE[video_id] = {"cancel": cancel, "thread": thread}
@@ -78,7 +80,7 @@ def wait_for(video_id: str, timeout: float) -> dict | None:
 
 
 def _run(video_id: str, url: str, quality: str, connector,
-         media_dir: Path, cancel: threading.Event) -> None:
+         media_dir: Path, cancel: threading.Event, settings: dict) -> None:
     acquired = False
     try:
         while not cancel.is_set():
@@ -105,24 +107,35 @@ def _run(video_id: str, url: str, quality: str, connector,
                                     on_progress, cancel)
         if cancel.is_set():
             return
-        db.update_video(video_id, status="processing", progress=92,
-                        stage="processing", title=result.info.title,
+        db.update_video(video_id, status="processing", progress=90,
+                        stage="checking", title=result.info.title,
                         uploader=result.info.uploader, duration=result.info.duration)
 
         path = result.path
-        if not media.is_browser_compatible(path):
+        playback_warning = None
+        browser_compatible = media.is_browser_compatible(path)
+        if settings["convert_for_browser"] and (
+                path.suffix.lower() != ".mp4" or not browser_compatible):
+            # MP4 is an explicit output choice, including for playable WebM files.
+            db.update_video(video_id, stage="converting")
             target = path.with_name(path.stem + ".playback.mp4")
             if not media.convert_to_mp4(path, target, cancel):
-                raise ConnectorError(
-                    "Video could not be converted for browser playback.")
+                raise ConnectorError("Video could not be converted to MP4.")
             path.unlink(missing_ok=True)
             path = target
+        elif not browser_compatible:
+            playback_warning = (
+                "Automatic conversion is off. This format may not play in "
+                "your browser; download the original file to use an external player.")
 
         thumbnail = result.thumbnail
         if not (thumbnail and thumbnail.is_file()):
-            candidate = media_dir / "thumbnail.jpg"
-            thumbnail = candidate if media.make_thumbnail(
-                path, candidate) else None
+            thumbnail = None
+            if settings["generate_thumbnails"]:
+                db.update_video(video_id, stage="thumbnail")
+                candidate = media_dir / "thumbnail.jpg"
+                thumbnail = candidate if media.make_thumbnail(
+                    path, candidate) else None
 
         if cancel.is_set():
             return
@@ -130,6 +143,7 @@ def _run(video_id: str, url: str, quality: str, connector,
             video_id, status="ready", progress=100, stage=None,
             file_path=str(path), file_size=path.stat().st_size,
             thumbnail_path=str(thumbnail) if thumbnail else None,
+            playback_warning=playback_warning,
             title=result.info.title, uploader=result.info.uploader,
             description=result.info.description,
             duration=result.info.duration, width=result.info.width,

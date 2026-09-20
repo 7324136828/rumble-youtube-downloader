@@ -105,7 +105,7 @@ class ProgressTrackerTest(unittest.TestCase):
         self.assertEqual(percents, sorted(percents))
         self.assertAlmostEqual(after_first_finished, 45.0, places=2)
         self.assertAlmostEqual(after_second_finished, 90.0, places=2)
-        self.assertEqual(reported[-1], (92, "processing"))
+        self.assertEqual(reported[-1], (90, "merging"))
 
     def test_thumbnail_postprocessing_does_not_finish_download_progress(self):
         reported = []
