@@ -160,6 +160,35 @@ The runner normally starts the frontend at <http://localhost:5173> and backend a
 another available port and prints the actual URLs. The frontend API proxy targets
 the selected backend. Stop both services with Ctrl+C.
 
+### LAN access and custom ports
+
+To use the app from another computer or phone on the same network:
+
+```powershell
+.\run_lan.bat
+# Choose separate frontend and backend ports:
+.\run_lan.bat --frontend-port 5174 --backend-port 8001
+# Equivalent command:
+.\run.bat serve --lan --frontend-port 5174 --backend-port 8001
+```
+
+On Linux/macOS, use `./run.sh serve --lan --frontend-port 5174 --backend-port 8001`.
+The `serve` command is optional when calling `run.bat`, `run.sh`, or `run.py` directly.
+Port flags also work without `--lan`.
+
+LAN mode listens on all IPv4 interfaces and prints LAN URLs. Open the frontend
+URL, such as `http://192.168.1.20:5174`, on the other device. The frontend proxies
+API requests, playback, thumbnails, and downloads to the chosen backend port.
+LAN devices share the host's library and controls; the app has no authentication.
+If the page cannot be reached, allow Node.js (or the frontend TCP port) through
+Windows Firewall on your private network and check that Wi-Fi client isolation
+is disabled. Direct API access also requires allowing the backend TCP port.
+
+Command-line ports override environment variables and `.env`. Explicit ports must
+be different and available; otherwise startup fails with an error. Without port
+flags, `FRONTEND_PORT` (default `5173`) and `BACKEND_PORT` (default `8000`) remain
+starting ports, with automatic selection of the next available port.
+
 ## Connectors and download lifecycle
 
 Platform connectors live under `backend/app/connectors/`. `registry.resolve(url)`
@@ -308,6 +337,7 @@ an existing destination database). The default download concurrency is two.
 From the repository root on Windows:
 
 ```powershell
+.venv\Scripts\python.exe -m unittest discover -s tests -v
 .venv\Scripts\python.exe -m unittest discover -s backend/tests -v
 npm.cmd --prefix frontend run build
 npm.cmd --prefix frontend run test:player
