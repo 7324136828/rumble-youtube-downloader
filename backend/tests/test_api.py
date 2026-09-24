@@ -38,7 +38,7 @@ class FakeConnector(Connector):
         return url.startswith("https://fake.test/")
 
     def download(self, url, dest_dir, quality="best", on_progress=None,
-                 cancel=None):
+                 cancel=None, download_settings=None):
         if "fail" in url:
             raise ConnectorError("boom")
         if "slow" in url:
@@ -68,6 +68,12 @@ FAKE = FakeConnector()
 class MediaApiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Module imports can happen after another suite has already loaded config.
+        # Isolate runtime paths here instead of relying on environment import order.
+        folder = Path(cls.enterClassContext(tempfile.TemporaryDirectory()))
+        for name, path in (("JOBS_ROOT", folder), ("JOBS_DB_PATH", folder / "jobs.db"),
+                           ("MEDIA_ROOT", folder / "media")):
+            cls.enterClassContext(patch.object(config, name, path))
         subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
              "-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=10",

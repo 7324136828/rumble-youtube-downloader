@@ -16,16 +16,19 @@ from . import config
 from .connectors import registry
 from .routers.recommendations import router as recommendations_router
 from .routers.settings import router as settings_router
+from .routers.connector import router as connector_router
 from .schemas.job import ConvertRequest
-from .schemas.media import DownloadRequest, ResolveRequest
+from .schemas.media import DownloadRequest, ResolveRequest, VideoRetentionPatch
 from .schemas.search import SearchResponse, SearchSource
 from .schemas.watch_history import WatchEvent
-from .services import db, library, media, pipeline, search
+from .services import (db, library, manual_video_search, media, pipeline, search,
+                       video_keywords, watch_later_titles, connector_activity, connector_bridge)
 from .utils import temp_manager
 
 app = FastAPI(title="Rumble/YouTube Conversion API")
 app.include_router(recommendations_router)
 app.include_router(settings_router)
+app.include_router(connector_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,10 +43,22 @@ def startup() -> None:
     db.init_db()
     db.fail_stale_jobs()
     db.fail_stale_videos()
+    library.purge_expired()
+    library.remove_downloaded_watch_later()
+    library.start_retention_scheduler()
+    video_keywords.schedule_missing()
+    connector_bridge.start()
     if not config.DOWNLOADER_SCRIPT.is_file():
         logging.getLogger(__name__).warning(
             "original-project script not found: %s — /api/convert is disabled",
             config.DOWNLOADER_SCRIPT)
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    connector_bridge.stop()
+    library.stop_retention_scheduler()
+    watch_later_titles.shutdown()
 
 
 @app.get("/api/health")
@@ -64,6 +79,13 @@ def record_watch_history(event: WatchEvent):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if row is not None:
+        try:
+            connector_activity.record_watch(row, event.watched_seconds, row["position_seconds"], event.completed)
+            connector_bridge.wake()
+        except Exception:
+            # Optional activity logging must not fail an already-saved playback report.
+            logging.getLogger(__name__).warning("Could not queue Connector playback activity.")
     return {"recorded": row is not None, "entry": row}
 
 
@@ -297,12 +319,16 @@ def list_connectors():
 @app.get("/api/search", response_model=SearchResponse)
 def search_platform_videos(q: str = Query(..., max_length=1000),
                           source: SearchSource = "all",
-                          limit: int = Query(12, ge=1, le=24)):
+                          limit: int = Query(12, ge=1, le=24),
+                          session: str | None = Query(None, min_length=1, max_length=64),
+                          fetch_all: bool = Query(False)):
     query = q.strip()
     if not 1 <= len(query) <= 200:
         raise HTTPException(status_code=400, detail="Search must contain 1 to 200 characters.")
     try:
-        return search.search_videos(query, source, limit)
+        return manual_video_search.search_videos(query, source, limit, session, fetch_all)
+    except manual_video_search.InvalidSearch as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except search.SearchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -333,11 +359,28 @@ def start_downloads(request: DownloadRequest):
 
 @app.get("/api/media")
 def list_media(status: str | None = None):
+    library.purge_expired()
     return [library.video_payload(row) for row in db.list_videos(status)]
+
+
+@app.get("/api/video-keywords")
+def list_video_keywords(q: str = Query("", max_length=100),
+                        session: str | None = Query(None, min_length=1, max_length=64)):
+    catalog = db.video_keyword_catalog(q.strip())
+    catalog["videos"] = [library.video_payload(row) for row in catalog["videos"]]
+    if q.strip() and session:
+        try:
+            connector_activity.record_search(q.strip(), "library_keywords", len(catalog["videos"]),
+                                             session_id=session)
+            connector_bridge.wake()
+        except Exception:
+            logging.getLogger(__name__).warning("Could not queue Connector keyword search activity.")
+    return catalog
 
 
 @app.get("/api/media/{video_id}")
 def get_media(video_id: str):
+    library.purge_expired()
     row = db.get_video(video_id)
     if not row:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -346,6 +389,7 @@ def get_media(video_id: str):
 
 @app.post("/api/media/{video_id}/conversions/{output_format}")
 def start_media_conversion(video_id: str, output_format: str):
+    library.purge_expired()
     try:
         return library.start_conversion(video_id, output_format.lower())
     except LookupError as exc:
@@ -356,7 +400,17 @@ def start_media_conversion(video_id: str, output_format: str):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@app.patch("/api/media/{video_id}/retention")
+def update_media_retention(video_id: str, request: VideoRetentionPatch):
+    try:
+        row = library.update_video_retention(video_id, request.retention_days)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return library.video_payload(row)
+
+
 def _conversion_file(video_id: str, output_format: str) -> tuple[dict, Path]:
+    library.purge_expired()
     if output_format not in ("mp4", "mp3"):
         raise HTTPException(status_code=404, detail="Conversion not found")
     video = db.get_video(video_id)
@@ -399,6 +453,7 @@ def delete_media(video_id: str):
 
 @app.get("/api/media/{video_id}/stream")
 def stream_media(video_id: str, request: Request):
+    library.purge_expired()
     row = db.get_video(video_id)
     if not row:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -430,6 +485,7 @@ def _stream_response(file_path: Path, request: Request):
 
 @app.get("/api/media/{video_id}/thumbnail")
 def media_thumbnail(video_id: str):
+    library.purge_expired()
     row = db.get_video(video_id)
     if not row:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -442,6 +498,7 @@ def media_thumbnail(video_id: str):
 
 @app.get("/api/media/{video_id}/download")
 def download_media(video_id: str):
+    library.purge_expired()
     row = db.get_video(video_id)
     if not row:
         raise HTTPException(status_code=404, detail="Video not found")

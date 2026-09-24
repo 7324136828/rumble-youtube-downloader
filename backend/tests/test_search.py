@@ -12,7 +12,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
 from app.schemas.search import SearchResult  # noqa: E402
-from app.services import search  # noqa: E402
+from app.schemas.recommendation_providers import default_providers  # noqa: E402
+from app.services import db, search  # noqa: E402
 
 
 # Structure observed on https://rumble.com/search/video?q=nature, with fixture
@@ -34,8 +35,9 @@ RUMBLE_CARD = """
 
 
 def result(source, number=1):
-    return SearchResult(id=f"{source}:{number}", title=f"Video {number}",
-                        connector=source, source_url=f"https://{source}.com/video-{number}")
+    ident = f"{number:011d}" if source == "youtube" else f"v{number}abc"
+    url = f"https://www.youtube.com/watch?v={ident}" if source == "youtube" else f"https://rumble.com/{ident}-video.html"
+    return SearchResult(id=f"{source}:{ident}", title=f"Video {number}", connector=source, source_url=url)
 
 
 class YouTubeSearchTest(unittest.TestCase):
@@ -190,6 +192,9 @@ class RumbleSearchTest(unittest.TestCase):
 
 class SearchApiTest(unittest.TestCase):
     def setUp(self):
+        settings = patch.object(db, "get_recommendation_settings", return_value={"providers": default_providers()})
+        settings.start()
+        self.addCleanup(settings.stop)
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 
@@ -204,7 +209,7 @@ class SearchApiTest(unittest.TestCase):
         self.assertEqual(payload["source"], "all")
         self.assertEqual(payload["warnings"], [])
         self.assertEqual([item["connector"] for item in payload["results"]], ["youtube", "rumble", "youtube"])
-        youtube.assert_called_once_with("nature", 3)
+        youtube.assert_called_once_with("nature", 4)
         download.assert_not_called()
 
     def test_selected_source_does_not_call_other_provider(self):
@@ -212,7 +217,7 @@ class SearchApiTest(unittest.TestCase):
                 patch.object(search, "search_rumble") as rumble:
             response = self.client.get("/api/search", params={"q": "nature", "source": "youtube"})
         self.assertEqual(response.status_code, 200)
-        youtube.assert_called_once_with("nature", 12)
+        youtube.assert_called_once_with("nature", 13)
         rumble.assert_not_called()
 
     def test_partial_failure_keeps_available_results_and_warning(self):

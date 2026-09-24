@@ -148,6 +148,10 @@ activemq-data/
 *.sage.py
 
 # Environments
+# Authentication exports must remain private.
+cookies.txt
+*.cookies.txt
+*-cookies.txt
 .env
 .env.*
 !.env.example

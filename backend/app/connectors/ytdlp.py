@@ -1,13 +1,16 @@
 """Shared yt-dlp connector implementation."""
 import re
 import threading
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Callable
 
 import yt_dlp
 
+from .. import config
 from ..services import media
 from .base import Connector, ConnectorCancelled, ConnectorError, DownloadResult, VideoInfo
+from .cookies import CookieDiagnostics, read_cookie_file
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -46,7 +49,7 @@ class _ProgressTracker:
 
 def _clean_message(exc: Exception) -> str:
     text = _ANSI_RE.sub("", str(exc))
-    return re.sub(r"^ERROR:\s*", "", text).strip()
+    return re.sub(r"^(?:ERROR:\s*)+", "", text.strip()).strip()
 
 
 class _SingleVideoYoutubeDL(yt_dlp.YoutubeDL):
@@ -58,6 +61,7 @@ class _SingleVideoYoutubeDL(yt_dlp.YoutubeDL):
 
 
 class YtDlpConnector(Connector):
+    accepts_download_settings = True
     QUALITY_FORMATS = {
         "best": "bestvideo+bestaudio/best",
         "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
@@ -81,11 +85,6 @@ class YtDlpConnector(Connector):
             "no_warnings": True,
             "noprogress": True,
             "writethumbnail": True,
-            "postprocessors": [{
-                "key": "FFmpegThumbnailsConvertor",
-                "format": "jpg",
-                "when": "before_dl",
-            }],
             "progress_hooks": [hook],
             "postprocessor_hooks": [hook],
             "js_runtimes": {"deno": {}, "node": {}},
@@ -93,12 +92,30 @@ class YtDlpConnector(Connector):
 
     def download(self, url: str, dest_dir: Path, quality: str = "best",
                  on_progress: Callable[[float, str], None] | None = None,
-                 cancel: threading.Event | None = None) -> DownloadResult:
+                 cancel: threading.Event | None = None,
+                 download_settings: dict | None = None) -> DownloadResult:
         if cancel is not None and cancel.is_set():
             raise ConnectorCancelled("Download cancelled.")
         tracker = _ProgressTracker(on_progress, cancel)
+        settings = download_settings or {}
+        browser = settings.get("cookie_browser")
+        profile = settings.get("cookie_browser_profile") or None
+        cookie_path = settings.get("cookie_file") or config.YTDLP_COOKIE_FILE
+        diagnostics = CookieDiagnostics()
         try:
-            with _SingleVideoYoutubeDL(self.ydl_opts(dest_dir, quality, tracker)) as ydl:
+            opts = self.ydl_opts(dest_dir, quality, tracker)
+            opts["logger"] = diagnostics
+            # The logger consumes warnings without printing them; keep them
+            # enabled so skipped/undecryptable cookies still yield useful help.
+            opts["no_warnings"] = False
+            with ExitStack() as stack:
+                # File mode must not touch the browser at all: yt-dlp otherwise
+                # tries browser extraction first, defeating the lock workaround.
+                if cookie_path:
+                    opts["cookiefile"] = stack.enter_context(read_cookie_file(Path(cookie_path)))
+                elif browser:
+                    opts["cookiesfrombrowser"] = (browser, profile, None, None)
+                ydl = stack.enter_context(_SingleVideoYoutubeDL(opts))
                 info = ydl.extract_info(url, download=True)
                 if not info:
                     raise ConnectorError("The source did not return a downloadable video.")
@@ -108,11 +125,33 @@ class YtDlpConnector(Connector):
         except ConnectorError:
             raise
         except Exception as exc:
-            raise ConnectorError(_clean_message(exc)) from exc
+            message = _clean_message(exc)
+            lowered = message.lower()
+            cookie_message = diagnostics.error_message(exc, browser, bool(cookie_path))
+            if cookie_message:
+                message = cookie_message
+            elif "sign in to confirm" in lowered and "not a bot" in lowered:
+                if cookie_path:
+                    message = ("YouTube still requires verification with the exported cookies. Export fresh "
+                               "YouTube cookies from a signed-in session, update the cookie file, then retry.")
+                elif browser:
+                    message = ("YouTube still requires verification. Confirm the selected browser is signed in "
+                               "to YouTube, or set a fresh exported cookies.txt file in Download settings, then retry.")
+                else:
+                    message = ("YouTube requires browser verification. Open Download settings, choose the "
+                               "browser where you are signed in to YouTube or an exported cookies.txt file, "
+                               "save, then retry this download.")
+            elif (browser or cookie_path) and (
+                    "cookie" in lowered and any(word in lowered for word in ("failed", "error", "could not", "unable"))):
+                message = (("Could not load the exported cookie file. Export a fresh Netscape cookies.txt file "
+                            "and check its path in Download settings.") if cookie_path else
+                           ("Could not load the selected browser cookies. Check the browser/profile in Download "
+                            "settings, fully exit that browser, or use an exported cookies.txt file."))
+            raise ConnectorError(message) from exc
 
         thumbnail = next(
             (dest_dir / f"{info.get('id')}{ext}"
-             for ext in (".jpg", ".jpeg", ".png", ".webp")
+             for ext in (".jpg", ".jpeg", ".png", ".webp", ".avif")
              if (dest_dir / f"{info.get('id')}{ext}").is_file()),
             None)
         return DownloadResult(path=path, info=self._video_info(info, url),

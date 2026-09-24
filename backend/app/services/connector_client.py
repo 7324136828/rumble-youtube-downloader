@@ -73,7 +73,7 @@ def _http_error(response: httpx.Response, deadline: float) -> ConnectorError:
     return ConnectorError(message, code=code, status_code=status)
 
 
-def request(method: str, path: str, body=None, timeout: float = 45) -> dict:
+def request(method: str, path: str, body=None, timeout: float = 45, *, expect_list=False) -> dict | list:
     deadline = time.monotonic() + timeout
     try:
         # No redirects: uploads and watch context stay at the configured server.
@@ -90,8 +90,8 @@ def request(method: str, path: str, body=None, timeout: float = 45) -> dict:
                         raise ConnectorError("The Connector response exceeded the size limit.")
                     data.extend(chunk)
                 payload = json.loads(data)
-                if not isinstance(payload, dict):
-                    raise ValueError("Expected an object")
+                if not isinstance(payload, list if expect_list else dict):
+                    raise ValueError("Unexpected response shape")
                 return payload
     except ConnectorError:
         raise

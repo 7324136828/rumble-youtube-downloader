@@ -1,10 +1,12 @@
 """Offline unit tests for the connector layer."""
 import os
+import io
 import sys
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -14,6 +16,7 @@ os.environ.setdefault("MEDIA_ROOT", str(Path(tempfile.mkdtemp()) / "media"))
 
 import yt_dlp  # noqa: E402
 
+from app import config  # noqa: E402
 from app.connectors import registry  # noqa: E402
 from app.connectors.base import ConnectorError
 from app.connectors.ytdlp import _ProgressTracker, _SingleVideoYoutubeDL  # noqa: E402
@@ -60,6 +63,69 @@ class YdlOptsTest(unittest.TestCase):
                              "bestvideo+bestaudio/best")
         youtube = registry.get("youtube")
         self.assertIn("avc1", youtube.format_for("720p"))
+
+    def test_thumbnail_conversion_cannot_abort_video_download(self):
+        opts = registry.get("generic").ydl_opts(
+            Path(tempfile.mkdtemp()), "best", lambda d: None)
+        self.assertTrue(opts["writethumbnail"])
+        self.assertNotIn("postprocessors", opts)
+
+    def test_source_avif_thumbnail_is_returned(self):
+        with tempfile.TemporaryDirectory() as folder:
+            dest = Path(folder)
+            video = dest / "video-id.mp4"
+            thumbnail = dest / "video-id.avif"
+            video.write_bytes(b"video")
+            thumbnail.write_bytes(b"thumbnail")
+            info = {"id": "video-id", "title": "Example",
+                    "filepath": str(video)}
+            ydl = MagicMock()
+            ydl.__enter__.return_value = ydl
+            ydl.extract_info.return_value = info
+            with patch("app.connectors.ytdlp._SingleVideoYoutubeDL",
+                       return_value=ydl):
+                result = registry.get("generic").download(
+                    "https://example.com/video", dest)
+            self.assertEqual(result.path, video.resolve())
+            self.assertEqual(result.thumbnail, thumbnail)
+
+    def test_download_uses_selected_browser_and_profile_without_storing_cookies(self):
+        with tempfile.TemporaryDirectory() as folder:
+            dest = Path(folder)
+            video = dest / "video-id.mp4"
+            video.write_bytes(b"video")
+            info = {"id": "video-id", "title": "Example", "filepath": str(video)}
+            ydl = MagicMock()
+            ydl.__enter__.return_value = ydl
+            ydl.extract_info.return_value = info
+            with patch("app.connectors.ytdlp._SingleVideoYoutubeDL", return_value=ydl) as constructor, \
+                    patch.object(config, "YTDLP_COOKIE_FILE", None):
+                registry.get("youtube").download("https://youtu.be/video-id", dest,
+                    download_settings={"cookie_browser": "edge", "cookie_browser_profile": "Profile 2"})
+            options = constructor.call_args.args[0]
+            self.assertEqual(options["cookiesfrombrowser"], ("edge", "Profile 2", None, None))
+            self.assertNotIn("cookiefile", options)
+
+    def test_environment_cookie_file_is_validated_and_passed_to_ytdlp(self):
+        with tempfile.TemporaryDirectory() as folder:
+            dest = Path(folder)
+            cookie_file = dest / "cookies.txt"
+            cookie_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            video = dest / "video-id.mp4"
+            video.write_bytes(b"video")
+            ydl = MagicMock()
+            ydl.__enter__.return_value = ydl
+            ydl.extract_info.return_value = {"id": "video-id", "title": "Example", "filepath": str(video)}
+            with patch("app.connectors.ytdlp._SingleVideoYoutubeDL", return_value=ydl) as constructor, \
+                    patch.object(config, "YTDLP_COOKIE_FILE", cookie_file):
+                registry.get("youtube").download("https://youtu.be/video-id", dest)
+            cookie_input = constructor.call_args.args[0]["cookiefile"]
+            self.assertIsInstance(cookie_input, io.StringIO)
+            self.assertTrue(cookie_input.closed)
+            self.assertEqual(cookie_file.read_text(encoding="utf-8"), "# Netscape HTTP Cookie File\n")
+            with patch.object(config, "YTDLP_COOKIE_FILE", dest / "missing.txt"):
+                with self.assertRaisesRegex(ConnectorError, "does not exist"):
+                    registry.get("youtube").download("https://youtu.be/video-id", dest)
 
     def test_playlists_are_rejected_before_download(self):
         with _SingleVideoYoutubeDL({"quiet": True}) as ydl:

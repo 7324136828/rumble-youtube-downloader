@@ -1,0 +1,57 @@
+.connector-integration {
+  grid-column: 1 / -1;
+}
+
+.connector-integration > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.connector-integration > summary > span:last-child {
+  display: grid;
+  gap: 5px;
+}
+
+.connector-integration > summary strong {
+  font-size: 1.05rem;
+}
+
+.connector-integration > summary > span:last-child > span {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.connector-integration-body {
+  margin-top: 18px;
+}
+
+.connector-integration-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 16px 0;
+  font-size: 0.88rem;
+}
+
+.connector-integration-status span {
+  color: var(--muted);
+}
+
+.connector-integration .recommendation-connection code {
+  overflow-wrap: anywhere;
+}
+
+.connector-integration-advanced {
+  margin-top: 18px;
+}
+
+.connector-integration-advanced > summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.connector-integration-advanced form {
+  margin-top: 14px;
+}

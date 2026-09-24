@@ -29,6 +29,20 @@
 .recommendation-field input[type=file] { padding: 8px; font-size: 11px; }
 .recommendation-field input::file-selector-button { background: #302838; color: #e6d9ef; border: 1px solid #62516d; border-radius: 5px; padding: 6px 8px; margin-right: 10px; cursor: pointer; }
 .recommendation-help { color: #aaa0b5; font-size: 12px; line-height: 1.8; margin-bottom: 18px; }
+.recommendation-provider-list { display: grid; gap: 13px; list-style: none; margin: 0 0 22px; padding: 0; }
+.recommendation-provider-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
+.recommendation-provider-list li > svg { flex-shrink: 0; color: #c49bab; }
+.recommendation-provider-details { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.recommendation-provider-details strong { font-size: 12px; overflow-wrap: anywhere; }
+.recommendation-provider-details span { font-size: 11px; color: #aaa0b5; overflow-wrap: anywhere; }
+.recommendation-provider-list .icon-btn { flex-shrink: 0; }
+.recommendation-providers .btn-primary { font-size: 12px; }
+.provider-search-settings { flex-basis: 100%; min-width: 0; padding: 8px 0 12px; border-bottom: 1px solid #34303d; }
+.provider-search-settings summary { color: #c3adcd; font-size: 11px; cursor: pointer; }
+.provider-search-settings form { margin-top: 14px; }
+.recommendation-weight-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.recommendation-field-error { color: #f0a2b3; font-size: 12px; line-height: 1.7; }
+.recommendation-fallback-note { color: #cbbadc; font-size: 11px; line-height: 1.8; padding: 11px 12px; border: 1px solid #54445f; border-radius: 7px; margin: 16px 0; background: #32253855; }
 .recommendation-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .recommendation-form-actions .btn-primary, .recommendation-form-actions .btn-secondary, .recommendation-import .btn-primary { font-size: 12px; }
 .recommendation-import { grid-column: 1 / -1; }
@@ -38,6 +52,8 @@
 .recommendation-panel-heading .eyebrow { display: block; font-size: 9px; color: #cb92b2; letter-spacing: 1.4px; margin-bottom: 8px; }
 .recommendation-panel-heading h2 { margin-bottom: 0; font-size: 17px; }
 .recommendation-panel-intro { color: #b5a7bf; font-size: 11px; line-height: 1.8; margin-top: 12px; margin-bottom: 18px; }
+.recommendation-source-filter { max-width: 320px; font-size: 11px; margin-bottom: 18px; }
+.recommendation-source-filter select { padding: 8px 10px; font-size: 11px; }
 .recommendation-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; }
 .recommendation-item { display: flex; gap: 12px; min-width: 0; padding-top: 18px; border-top: 1px solid #39303e; }
 .recommendation-thumbnail { position: relative; width: 106px; height: 66px; flex-shrink: 0; display: grid; place-items: center; overflow: hidden; border-radius: 7px; background: #302537; color: #b785a4; }
@@ -45,9 +61,11 @@
 .recommendation-thumbnail > span { position: absolute; right: 4px; bottom: 4px; background: #000c; color: white; padding: 2px 4px; border-radius: 3px; font-size: 9px; }
 .recommendation-item-body { flex: 1; min-width: 0; }
 .recommendation-item-body .connector-badge { font-size: 8px; padding: 3px 5px; }
+.recommendation-unverified { display: inline-block; margin-left: 6px; padding: 3px 5px; border: 1px solid #9c784a; border-radius: 4px; color: #e4bd83; font-size: 8px; text-transform: uppercase; letter-spacing: .4px; }
 .recommendation-item-body h3 { font-size: 12px; line-height: 1.6; margin: 7px 0 5px; overflow-wrap: anywhere; }
 .recommendation-item-body > p { font-size: 10px; line-height: 1.7; margin: 0 0 8px; color: #b7a8c2; overflow-wrap: anywhere; }
 .recommendation-item-body .recommendation-reason { color: #d0bfdc; }
+.recommendation-item-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .recommendation-item-body .btn-primary, .recommendation-item-body .btn-secondary { font-size: 10px; padding: 7px 9px; line-height: 1.5; }
 .recommendation-item-body .recommendation-download-state, .recommendation-item-body .recommendation-download-error { margin-top: 9px; }
 .recommendation-item-body .recommendation-download-error { color: #f3a5b3; }
@@ -58,9 +76,32 @@
 .recommendation-state .recommendation-form-actions { justify-content: center; }
 .recommendation-state .btn-secondary { font-size: 11px; }
 .recommendation-warning { color: #d9bd92; font-size: 11px; line-height: 1.7; padding: 10px 12px; margin: 16px 0 0; background: #b58c3910; border: 1px solid #b58c3930; border-radius: 6px; overflow-wrap: anywhere; }
+.recommendation-search-details { margin-top: 17px; border: 1px solid #3c3443; border-radius: 7px; color: #c2b6cc; }
+.recommendation-search-details summary { cursor: pointer; padding: 11px 12px; font-size: 11px; font-weight: 600; }
+.recommendation-search-details summary > span { margin-left: 8px; color: #a99cb5; font-size: 10px; font-weight: 400; }
+.recommendation-search-details summary:focus-visible { outline: 2px solid #ff7d93; outline-offset: 3px; border-radius: 7px; }
+.recommendation-search-details > ul { list-style: none; padding: 0 12px 2px; margin: 0; }
+.recommendation-search-details li { padding: 11px 0; border-top: 1px solid #39303e; overflow-wrap: anywhere; }
+.recommendation-source-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 5px 12px; }
+.recommendation-source-heading strong { font-size: 11px; }
+.recommendation-source-heading > span { color: #a99cb5; font-size: 10px; }
+.recommendation-source-status { margin: 6px 0 0; color: #b7c5bb; font-size: 11px; line-height: 1.6; }
+.recommendation-source-status.is-unavailable { color: #d9bd92; }
+.recommendation-source-note { margin: 6px 0 0; color: #a99cb5; font-size: 10px; line-height: 1.7; }
 .recommendation-keywords { color: #a895b7; font-size: 10px; line-height: 1.8; margin: 16px 0 0; overflow-wrap: anywhere; }
 .recommendation-panel-feed { width: 100%; max-width: 900px; margin-left: auto; margin-right: auto; }
 .recommendation-panel-feed .recommendation-list { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
+.watch-history-sources { margin-bottom: 22px; }
+.watch-history-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(310px, .65fr); gap: 24px; align-items: start; }
+.watch-history-layout .recommendation-panel { margin-top: 0; }
+.watch-history-item { display: flex; align-items: center; gap: 14px; padding: 15px 0; border-top: 1px solid #302d38; }
+.watch-history-thumbnail { position: relative; display: grid; place-items: center; width: 112px; aspect-ratio: 16 / 9; flex: 0 0 112px; overflow: hidden; border-radius: 8px; background: #27222d; color: #b785a4; }
+.watch-history-thumbnail img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.watch-history-item > div { flex: 1; min-width: 0; }
+.watch-history-item h3 { margin: 5px 0 3px; font-size: 13px; overflow-wrap: anywhere; }
+.watch-history-item p { margin: 0; color: #9990a2; font-size: 10px; line-height: 1.6; }
+.watch-history-item .watch-history-download-error { margin-top: 6px; color: #f3a5b3; }
+.watch-history-item .btn-secondary { flex-shrink: 0; }
 @media (max-width: 1150px) {
   .header-actions .recommendation-toggle { gap: 6px; font-size: 10px; }
   .recommendation-toggle-wrap.is-compact .recommendation-toggle-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -70,6 +111,7 @@
   .recommendation-settings-grid { grid-template-columns: 1fr; }
   .recommendation-settings-card { padding: 20px; }
   .recommendation-import-fields { grid-template-columns: 1fr; gap: 0; }
+  .watch-history-layout { grid-template-columns: 1fr; }
 }
 @media (max-width: 600px) {
   .app-header:has(.recommendation-toggle-wrap) { height: auto; min-height: 98px; flex-direction: column; align-items: stretch; justify-content: center; gap: 8px; padding-top: 9px; padding-bottom: 9px; }
@@ -84,6 +126,7 @@
   .recommendation-thumbnail { width: 94px; height: 61px; }
   .recommendation-settings .page-heading > .recommendation-toggle-wrap { align-items: flex-start; }
   .recommendation-settings .error-banner { flex-wrap: wrap; }
+  .watch-history-thumbnail { width: 92px; flex-basis: 92px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .recommendation-switch, .recommendation-switch::after { transition: none; }

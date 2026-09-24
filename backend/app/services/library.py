@@ -1,4 +1,5 @@
 """Persistent video library downloads via connectors."""
+import logging
 import shutil
 import threading
 import time
@@ -9,13 +10,68 @@ from pathlib import Path
 from .. import config
 from ..connectors import ConnectorCancelled, ConnectorError, registry
 from ..utils import temp_manager
-from . import db, media
+from . import db, media, video_keywords, watch_later_thumbnails
 
 _ACTIVE: dict[str, dict] = {}
 _CONVERSIONS: dict[tuple[str, str], dict] = {}
 _LOCK = threading.Lock()
 _SLOTS = threading.Semaphore(config.MAX_CONCURRENT_DOWNLOADS)
 _CONVERSION_FORMATS = {"mp4", "mp3"}
+_LOG = logging.getLogger(__name__)
+RETENTION_INTERVAL_SECONDS = 60 * 60
+_RETENTION_LOCK = threading.Lock()
+_RETENTION_THREAD = None
+_RETENTION_STOP = None
+
+
+def _remove_downloaded_from_watch_later(url: str) -> bool:
+    """Remove a successfully downloaded URL without risking its ready media row."""
+    try:
+        item = db.get_watch_later_by_source_url(url)
+        if item is None:
+            return False
+        watch_later_thumbnails.remove_local(item["catalog_id"])
+        return bool(db.remove_watch_later(item["catalog_id"])["removed"])
+    except Exception:
+        _LOG.exception("Could not remove a completed download from Watch later.")
+        return False
+
+
+def remove_downloaded_watch_later() -> int:
+    """Reconcile saved entries against downloads completed before this process started."""
+    return sum(_remove_downloaded_from_watch_later(row["source_url"])
+               for row in db.list_videos(status="ready"))
+
+
+def _retention_loop(stop, interval=RETENTION_INTERVAL_SECONDS) -> None:
+    while not stop.wait(interval):
+        try:
+            purge_expired()
+        except Exception:
+            _LOG.exception("Scheduled expired-video cleanup failed; it will retry in one hour.")
+
+
+def start_retention_scheduler() -> None:
+    global _RETENTION_THREAD, _RETENTION_STOP
+    with _RETENTION_LOCK:
+        if _RETENTION_THREAD is not None and _RETENTION_THREAD.is_alive():
+            return
+        _RETENTION_STOP = threading.Event()
+        _RETENTION_THREAD = threading.Thread(
+            target=_retention_loop, args=(_RETENTION_STOP,),
+            daemon=True, name="expired-video-cleanup")
+        _RETENTION_THREAD.start()
+
+
+def stop_retention_scheduler() -> None:
+    global _RETENTION_THREAD, _RETENTION_STOP
+    with _RETENTION_LOCK:
+        thread, stop = _RETENTION_THREAD, _RETENTION_STOP
+        _RETENTION_THREAD = _RETENTION_STOP = None
+    if stop is not None:
+        stop.set()
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(timeout=5)
 
 
 def start_download(url: str, quality: str = "best") -> dict:
@@ -27,7 +83,9 @@ def start_download(url: str, quality: str = "best") -> dict:
     video_id = str(uuid.uuid4())
     media_dir = temp_manager.library_root() / video_id
     media_dir.mkdir(parents=True, exist_ok=True)
-    row = db.create_video(video_id, url, connector.id, quality, media_dir)
+    days = settings.get("retention_days", 7)
+    retention_days = days if settings.get("auto_delete_enabled", days > 0) and days > 0 else None
+    row = db.create_video(video_id, url, connector.id, quality, media_dir, retention_days)
 
     cancel = threading.Event()
     thread = threading.Thread(
@@ -63,6 +121,23 @@ def cancel_and_delete(video_id: str) -> None:
     db.delete_video(video_id)
 
 
+def purge_expired() -> list[str]:
+    """Delete ready downloads whose per-video retention deadline has passed."""
+    deleted = []
+    with db.RETENTION_POLICY_LOCK:
+        for row in db.list_expired_videos():
+            cancel_and_delete(row["id"])
+            deleted.append(row["id"])
+    return deleted
+
+
+def update_video_retention(video_id: str, retention_days: int) -> dict:
+    row = db.update_video_retention(video_id, retention_days)
+    if row is None:
+        raise LookupError("Video not found")
+    return row
+
+
 def video_payload(row: dict) -> dict:
     payload = {k: v for k, v in row.items()
                if k not in ("media_dir", "file_path", "thumbnail_path")}
@@ -71,6 +146,7 @@ def video_payload(row: dict) -> dict:
     payload["thumbnail_url"] = (f"/api/media/{video_id}/thumbnail"
                                 if row.get("thumbnail_path") else None)
     payload["download_url"] = f"/api/media/{video_id}/download"
+    payload["keywords"] = db.get_video_keywords(video_id)
     file_path = row.get("file_path")
     payload["file_name"] = Path(file_path).name if file_path else None
     payload["conversions"] = {
@@ -215,8 +291,13 @@ def _run(video_id: str, url: str, quality: str, connector,
             reported["stage"] = stage
             db.update_video(video_id, progress=reported["pct"], stage=stage)
 
-        result = connector.download(url, media_dir, quality,
-                                    on_progress, cancel)
+        if getattr(connector, "accepts_download_settings", False):
+            result = connector.download(url, media_dir, quality, on_progress, cancel,
+                                        download_settings=settings)
+        else:
+            # Preserve compatibility with custom connectors implementing the
+            # original five-argument contract.
+            result = connector.download(url, media_dir, quality, on_progress, cancel)
         if cancel.is_set():
             return
         db.update_video(video_id, status="processing", progress=90,
@@ -251,16 +332,18 @@ def _run(video_id: str, url: str, quality: str, connector,
 
         if cancel.is_set():
             return
-        db.update_video(
-            video_id, status="ready", progress=100, stage=None,
+        completed = datetime.now(timezone.utc)
+        db.complete_video(
+            video_id, completed_at=completed.isoformat(), progress=100, stage=None,
             file_path=str(path), file_size=path.stat().st_size,
             thumbnail_path=str(thumbnail) if thumbnail else None,
             playback_warning=playback_warning,
             title=result.info.title, uploader=result.info.uploader,
             description=result.info.description,
             duration=result.info.duration, width=result.info.width,
-            height=result.info.height,
-            completed_at=datetime.now(timezone.utc).isoformat())
+            height=result.info.height)
+        video_keywords.schedule(video_id)
+        _remove_downloaded_from_watch_later(url)
     except ConnectorCancelled:
         pass
     except Exception as exc:

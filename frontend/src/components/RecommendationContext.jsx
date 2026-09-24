@@ -1,11 +1,13 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { getRecommendationSettings, updateRecommendationSettings } from '../services/api';
+import { DEFAULT_FALLBACK_WEIGHTS, DEFAULT_RECOMMENDATION_PROVIDERS } from '../recommendationUtils';
 import './Recommendations.css';
 
-const DEFAULT_SETTINGS = { enabled: false, model_id: null, seed_keywords: [], revision: 0 };
+const DEFAULT_SETTINGS = { enabled: false, model_id: null, seed_keywords: [], custom_prompt: '', providers: DEFAULT_RECOMMENDATION_PROVIDERS, fallback_weights: DEFAULT_FALLBACK_WEIGHTS, allow_unverified_links: false, allow_ai_title_lookup: false, fetch_all_search_links: false, revision: 0 };
 const RecommendationContext = createContext({
-  settings: DEFAULT_SETTINGS, enabled: false, loading: false, saving: false, error: '', revision: 0,
+  settings: DEFAULT_SETTINGS, settingsLoaded: true, enabled: false, loading: false, saving: false, error: '', revision: 0,
   updateSettings: async () => DEFAULT_SETTINGS, reloadSettings: () => {}, openSettings: () => {},
+  savedWatchLaterUrls: new Set(), noteWatchLaterSaved: () => {}, noteWatchLaterRemoved: () => {},
 });
 
 export function useRecommendations() {
@@ -14,11 +16,13 @@ export function useRecommendations() {
 
 export function RecommendationProvider({ children, navigate }) {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
   const [reload, setReload] = useState(0);
+  const [savedWatchLaterUrls, setSavedWatchLaterUrls] = useState(() => new Set());
   const mounted = useRef(false);
   const mutation = useRef(0);
   const queue = useRef(Promise.resolve());
@@ -36,6 +40,7 @@ export function RecommendationProvider({ children, navigate }) {
     getRecommendationSettings(controller.signal).then((result) => {
       if (!controller.signal.aborted && version === mutation.current) {
         setSettings({ ...DEFAULT_SETTINGS, ...result });
+        setSettingsLoaded(true);
         setRevision((value) => value + 1);
       }
     }).catch((err) => {
@@ -59,6 +64,7 @@ export function RecommendationProvider({ children, navigate }) {
     return operation.then((result) => {
       if (mounted.current && version === mutation.current) {
         setSettings({ ...DEFAULT_SETTINGS, ...result });
+        setSettingsLoaded(true);
         setRevision((value) => value + 1);
       }
       return result;
@@ -75,9 +81,12 @@ export function RecommendationProvider({ children, navigate }) {
     else window.location.hash = 'recommendations';
   }, [navigate]);
   const reloadSettings = useCallback(() => setReload((value) => value + 1), []);
+  const noteWatchLaterSaved = useCallback((urls) => setSavedWatchLaterUrls((previous) => new Set([...previous, ...urls])), []);
+  const noteWatchLaterRemoved = useCallback((url) => setSavedWatchLaterUrls((previous) => { const next = new Set(previous); next.delete(url); return next; }), []);
   return <RecommendationContext.Provider value={{
-    settings, enabled: Boolean(settings.enabled) && !loading && !saving,
+    settings, settingsLoaded, enabled: Boolean(settings.enabled) && !loading && !saving,
     loading, saving, error, revision, updateSettings, reloadSettings, openSettings,
+    savedWatchLaterUrls, noteWatchLaterSaved, noteWatchLaterRemoved,
   }}>{children}</RecommendationContext.Provider>;
 }
 
