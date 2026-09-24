@@ -1134,11 +1134,12 @@ def add_watch_later(videos) -> dict:
         settings = _settings_payload(conn.execute("SELECT * FROM recommendation_settings WHERE id=1").fetchone())
         providers = _catalog_providers(settings["providers"], include_disabled=True)
         normalized_items = {}
-        for video in validated.videos:
+        for position, video in enumerate(validated.videos, start=1):
             item = video.model_dump(exclude_unset=True)
             normalized = _catalog_normalized(item, providers)
             if normalized is None:
-                raise ValueError("Every saved URL must be an individual video on a configured website.")
+                raise ValueError(f"Video {position} has an invalid URL. Use an individual video link "
+                                 "from a configured website.")
             if normalized[1] in normalized_items:
                 item = {**normalized_items[normalized[1]][0], **item}
             normalized_items[normalized[1]] = (item, normalized)

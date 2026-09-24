@@ -75,8 +75,17 @@ class WatchLaterVideo(BaseModel):
 
     @field_validator("source_url", "title", "description")
     @classmethod
-    def trim_text(cls, value):
-        return value.strip() if value is not None else None
+    def trim_text(cls, value, info):
+        if value is None:
+            return None
+        value = value.strip()
+        if info.field_name == "source_url" and value.startswith(("[https://", "[http://")):
+            # Agent messages can accidentally pass a Markdown link's opening
+            # bracket as part of the URL. Only remove that one wrapper character.
+            candidate = value[1:-1] if value.endswith("]") else value[1:]
+            if not any(character in candidate for character in "[]()"):
+                value = candidate
+        return value
 
 
 class WatchLaterImport(BaseModel):

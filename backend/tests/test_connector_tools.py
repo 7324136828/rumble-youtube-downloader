@@ -216,6 +216,37 @@ class ConnectorToolsTest(unittest.TestCase):
                                                   {"source_url": "https://example.invalid/not-video"}])
         self.assertEqual(self.call("list_watch_later")["total"], before)
 
+    def test_add_watch_later_accepts_agent_bracket_and_short_rumble_batch(self):
+        urls = [
+            "[https://www.youtube.com/watch?v=fR6Qd0B0ZUU",
+            "https://rumble.com/v7cms2y",
+            "https://www.youtube.com/watch?v=4Y40VcYk0b0",
+            "https://rumble.com/v7cv6s4",
+            "https://www.youtube.com/watch?v=Althvag63pw",
+            "https://www.youtube.com/watch?v=yBLNtVtajPw",
+            "https://www.youtube.com/watch?v=5vEVJ4dWpqY",
+            "https://www.youtube.com/watch?v=VtRIRJ0tBRc",
+            "https://www.youtube.com/watch?v=b5wQJ1mwdTs",
+        ]
+        with patch.object(tools.watch_later_titles, "schedule_items", side_effect=lambda items: items) as titles:
+            result = self.call("add_watch_later", videos=[
+                {"source_url": url, "title": None, "description": None} for url in urls
+            ], fetch_titles=True)
+        self.assertEqual((result["added"], result["updated"]), (9, 0))
+        self.assertEqual(len(result["items"]), 9)
+        self.assertEqual(result["items"][0]["source_url"], urls[0][1:])
+        self.assertEqual(result["items"][1]["source_url"], "https://rumble.com/v7cms2y.html")
+        self.assertEqual(result["items"][3]["source_url"], "https://rumble.com/v7cv6s4.html")
+        self.assertEqual(self.call("list_watch_later")["total"], 9)
+        titles.assert_called_once()
+
+    def test_invalid_watch_later_entry_identifies_its_position_without_partial_save(self):
+        with self.assertRaisesRegex(ValueError, "Video 2 has an invalid URL"):
+            self.call("add_watch_later", videos=[{"source_url": URL},
+                                                  {"source_url": "https://rumble.com/c/channel"}],
+                      fetch_titles=False)
+        self.assertEqual(self.call("list_watch_later")["total"], 0)
+
     def test_invalid_filters_and_unknown_tools_fail_before_submission(self):
         for tool, arguments in (("list_downloaded_videos", {"limit": 101}),
                                 ("list_watch_history", {"offset": -1}),

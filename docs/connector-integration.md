@@ -63,7 +63,7 @@ registration, in The Connector at `GET /api/agent/tools`.
 | `clipfeed_generate_recommendations` | Generate a playlist using request-specific `context`, `source`, `video_id`, `exclude_urls`, `limit`, and `refresh`. Requires enabled AI recommendations and returns a task ID. |
 | `clipfeed_list_recommendation_history` | Browse persisted generated recommendations with common list filters and optional `fallback`. Includes `recommended_at`. |
 | `clipfeed_list_watch_later` | Browse saved links with common list filters. Includes `saved_at`. |
-| `clipfeed_add_watch_later` | Save up to 100 individual videos with optional titles/descriptions; existing entries update without duplication. Optional title lookup is on by default. |
+| `clipfeed_add_watch_later` | Save up to 100 individual videos with optional titles/descriptions; existing entries update without duplication. Send plain `source_url` values. Short Rumble `/v...` links are accepted. Optional title lookup is on by default. Invalid entries report their position and the batch is not saved. |
 | `clipfeed_list_watch_history` | Browse per-video watch totals with common list filters and optional `completed`. Includes watched seconds and the latest watch date. |
 | `clipfeed_recent_tags` | Read up to `limit` (1–100) tags on videos watched in the past 30 days, ordered by recency. |
 | `clipfeed_list_activity` | Browse logged events with `limit`, `offset`, optional `event_type` (`search`, `watch`, or `recommendation_impressions`), `date_from`, and `date_to`. |

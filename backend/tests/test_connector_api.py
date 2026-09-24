@@ -107,6 +107,16 @@ class ConnectorApiTest(unittest.TestCase):
         with patch.object(connector_tools, "dispatch", side_effect=db.SettingsConflictError("changed")):
             self.assertEqual(self.hook(token, name="clipfeed_set_recommendation_hint", json={"hint": "new"}).status_code, 409)
 
+    def test_watch_later_bad_url_response_identifies_entry(self):
+        token = self.enable()
+        response = self.hook(token, name="clipfeed_add_watch_later", json={"videos": [
+            {"source_url": self.video["source_url"]},
+            {"source_url": "https://rumble.com/c/channel"},
+        ]})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Video 2", response.json()["detail"])
+        self.assertEqual(db.list_watch_later()["total"], 0)
+
     def test_impressions_are_opt_in_and_deduplicated(self):
         body = {"event_id": "visible-cards", "context": "feed", "items": [self.video]}
         self.assertFalse(self.client.post("/api/connector/impressions", json=body).json()["recorded"])

@@ -357,7 +357,7 @@ _TOOLS = {
     "clipfeed_list_watch_later": (args.ListVideos, _list_catalog,
         "Browse all saved Watch later videos from the beginning, with source, query, uploader and saved-date filters. Follow next_offset until null."),
     "clipfeed_add_watch_later": (args.AddWatchLater, _add_watch_later,
-        "Save up to 100 individual video links to Watch later, with optional titles and descriptions. Existing entries are updated without duplication. Set fetch_titles false to skip automatic missing-title lookup."),
+        "Save up to 100 individual video links to Watch later, with optional titles and descriptions. Pass source_url as a plain URL. Short Rumble /v... links are accepted. Existing entries are updated without duplication. Set fetch_titles false to skip automatic missing-title lookup."),
     "clipfeed_list_watch_history": (args.WatchHistory, _list_watched,
         "Browse all watched videos from the beginning with source, title/uploader query, date and completed filters. Returns cumulative watched seconds and completion per video; date refers to the latest watch. Follow next_offset until null."),
     "clipfeed_recent_tags": (args.RecentTags, _recent_tags,

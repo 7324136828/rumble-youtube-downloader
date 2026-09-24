@@ -144,6 +144,13 @@ class RumbleSearchTest(unittest.TestCase):
         parser.feed(RUMBLE_CARD * 2)
         self.assertEqual(len(parser.results), 1)
 
+    def test_short_rumble_video_link_normalizes_to_slugless_watch_page(self):
+        self.assertEqual(search._rumble_url("https://rumble.com/v7cms2y"),
+                         ("v7cms2y", "https://rumble.com/v7cms2y.html"))
+        for invalid in ("https://rumble.com/v7cms2y/extra", "https://rumble.com/c/channel",
+                        "https://rumble.com.evil.test/v7cms2y", "https://user:secret@rumble.com/v7cms2y"):
+            self.assertIsNone(search._rumble_url(invalid))
+
     def test_missing_optional_metadata_is_supported(self):
         parser = search._RumbleResultsParser(12)
         parser.feed('<article class=video-item><a class=video-item--a href=/v123abc-clip.html></a>'

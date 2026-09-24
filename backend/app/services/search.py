@@ -19,6 +19,7 @@ MAX_PAGE_BYTES = 2 * 1024 * 1024
 _NAMES = {"youtube": "YouTube", "rumble": "Rumble"}
 _VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}\Z")
 _RUMBLE_PATH = re.compile(r"/(?P<id>v[a-z0-9]+)(?:-[\w.-]+)?\.html\Z", re.ASCII)
+_RUMBLE_SHORT_PATH = re.compile(r"/(?P<id>v[a-z0-9]+)/?\Z", re.ASCII)
 _LOG = logging.getLogger(__name__)
 _OUTBOUND_LOG = logging.getLogger("uvicorn.error")
 
@@ -61,12 +62,13 @@ def _rumble_url(value: str) -> tuple[str, str] | None:
         return None
     try:
         parsed = urlsplit(urljoin("https://rumble.com", value))
-        match = _RUMBLE_PATH.fullmatch(parsed.path)
+        match = _RUMBLE_PATH.fullmatch(parsed.path) or _RUMBLE_SHORT_PATH.fullmatch(parsed.path)
         if (match and parsed.scheme in ("http", "https")
                 and parsed.hostname in ("rumble.com", "www.rumble.com")
                 and not parsed.username and not parsed.password
                 and parsed.port in (None, 80, 443)):
-            return match["id"], "https://rumble.com" + parsed.path
+            path = parsed.path if parsed.path.endswith(".html") else f"/{match['id']}.html"
+            return match["id"], "https://rumble.com" + path
     except ValueError:
         pass
     return None
