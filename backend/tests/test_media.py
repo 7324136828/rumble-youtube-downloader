@@ -110,6 +110,22 @@ class CodecPreparationTest(unittest.TestCase):
             media._run_conversion([sys.executable, "-c", "import time; time.sleep(30)"],
                                   cancelled)
 
+    def test_audio_track_is_extracted_as_mp3(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "source.m4a"
+            target = Path(folder) / "audio.mp3"
+            subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2",
+                 "-c:a", "aac", str(source)], check=True)
+            self.assertTrue(media.convert_to_mp3(source, target))
+            self.assertTrue(target.is_file())
+            result = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries",
+                 "stream=codec_name", "-of", "default=nw=1:nk=1", str(target)],
+                capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.strip(), "mp3")
+
 
 if __name__ == "__main__":
     unittest.main()

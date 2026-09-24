@@ -145,6 +145,18 @@ def convert_to_mp4(video: Path, target: Path, cancel=None) -> bool:
     return ok
 
 
+def convert_to_mp3(video: Path, target: Path, cancel=None) -> bool:
+    """Extract the first audio track into a broadly compatible MP3 file."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    ok = _run_conversion(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-i", str(video), "-map", "0:a:0", "-vn", "-c:a", "libmp3lame",
+         "-q:a", "2", str(target)], cancel)
+    if not ok:
+        target.unlink(missing_ok=True)
+    return ok
+
+
 def make_thumbnail(video: Path, target: Path) -> bool:
     try:
         target.parent.mkdir(parents=True, exist_ok=True)

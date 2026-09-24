@@ -20,6 +20,7 @@ from app.connectors import (Connector, ConnectorCancelled,  # noqa: E402
                             ConnectorError, DownloadResult, VideoInfo,
                             registry)
 from app.services import db, library  # noqa: E402
+from app import config  # noqa: E402
 
 FIXTURE_DIR = Path(tempfile.mkdtemp())
 FIXTURE_MP4 = FIXTURE_DIR / "fixture.mp4"
@@ -36,7 +37,7 @@ class FakeConnector(Connector):
         return url.startswith("https://fake.test/")
 
     def download(self, url, dest_dir, quality="best", on_progress=None,
-                 cancel=None):
+                 cancel=None, download_settings=None):
         if "fail" in url:
             raise ConnectorError("boom")
         if "slow" in url:
@@ -74,6 +75,11 @@ FAKE = FakeConnector()
 class LibraryTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Isolate paths even when another suite imported app.config before us.
+        folder = Path(cls.enterClassContext(tempfile.TemporaryDirectory()))
+        for name, path in (("JOBS_ROOT", folder), ("JOBS_DB_PATH", folder / "jobs.db"),
+                           ("MEDIA_ROOT", folder / "media")):
+            cls.enterClassContext(patch.object(config, name, path))
         for fixture in (FIXTURE_MP4, FIXTURE_MKV):
             subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
@@ -103,8 +109,10 @@ class LibraryTest(unittest.TestCase):
         self.addCleanup(settings_patch.stop)
 
     def test_download_lifecycle(self):
-        row = library.start_download("https://fake.test/ok")
-        result = library.wait_for(row["id"], 15)
+        with patch.object(library, "_remove_downloaded_from_watch_later") as remove_saved:
+            row = library.start_download("https://fake.test/ok")
+            result = library.wait_for(row["id"], 15)
+        remove_saved.assert_called_once_with("https://fake.test/ok")
         self.assertEqual(result["status"], "ready")
         self.assertEqual(result["progress"], 100)
         file_path = Path(result["file_path"])
@@ -253,6 +261,46 @@ class LibraryTest(unittest.TestCase):
         self.assertIsNone(result["thumbnail_path"])
         library.cancel_and_delete(row["id"])
 
+    def test_on_demand_mp3_conversion_is_persisted_and_reused(self):
+        row = library.start_download("https://fake.test/ok")
+        result = library.wait_for(row["id"], 15)
+        self.assertEqual(result["status"], "ready")
+
+        def write_mp3(source, target, cancel):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"test mp3")
+            return True
+
+        with patch.object(library.media, "convert_to_mp3",
+                          side_effect=write_mp3) as convert:
+            started = library.start_conversion(row["id"], "mp3")
+            self.assertIn(started["status"], ("queued", "converting", "completed"))
+            conversion = library.wait_for_conversion(row["id"], "mp3", 5)
+            self.assertEqual(conversion["status"], "completed")
+            payload = library.video_payload(db.get_video(row["id"]))["conversions"]["mp3"]
+            self.assertEqual(payload["status"], "completed")
+            self.assertTrue(payload["download_url"].endswith("/conversions/mp3/download"))
+            library.start_conversion(row["id"], "mp3")
+            self.assertEqual(convert.call_count, 1)
+        library.cancel_and_delete(row["id"])
+
+    def test_failed_on_demand_conversion_can_be_retried(self):
+        row = library.start_download("https://fake.test/ok")
+        self.assertEqual(library.wait_for(row["id"], 15)["status"], "ready")
+        with patch.object(library.media, "convert_to_mp3", return_value=False):
+            library.start_conversion(row["id"], "mp3")
+            failed = library.wait_for_conversion(row["id"], "mp3", 5)
+        self.assertEqual(failed["status"], "failed")
+        self.assertIn("could not be converted", failed["error_message"])
+        with patch.object(library.media, "convert_to_mp3",
+                          side_effect=lambda source, target, cancel:
+                          (target.parent.mkdir(parents=True, exist_ok=True),
+                           target.write_bytes(b"retry"), True)[-1]):
+            library.start_conversion(row["id"], "mp3")
+            retried = library.wait_for_conversion(row["id"], "mp3", 5)
+        self.assertEqual(retried["status"], "completed")
+        library.cancel_and_delete(row["id"])
+
     def test_failed_download(self):
         row = library.start_download("https://fake.test/fail")
         result = library.wait_for(row["id"], 15)
@@ -266,6 +314,26 @@ class LibraryTest(unittest.TestCase):
         library.cancel_and_delete(row["id"])
         self.assertIsNone(db.get_video(row["id"]))
         self.assertFalse(media_dir.exists())
+
+    def test_expired_download_is_purged_but_keep_indefinitely_is_not(self):
+        self.settings.update(auto_delete_enabled=True, retention_days=7)
+        expiring = library.start_download("https://fake.test/ok")
+        expiring_row = library.wait_for(expiring["id"], 15)
+        self.assertIsNotNone(expiring_row["expires_at"])
+        expiring_dir = Path(expiring_row["media_dir"])
+        db.update_video(expiring["id"], completed_at="2000-01-01T00:00:00+00:00",
+                        expires_at="2000-01-08T00:00:00+00:00")
+
+        self.settings["auto_delete_enabled"] = False
+        kept = library.start_download("https://fake.test/ok")
+        kept_row = library.wait_for(kept["id"], 15)
+        self.assertIsNone(kept_row["expires_at"])
+
+        self.assertEqual(library.purge_expired(), [expiring["id"]])
+        self.assertIsNone(db.get_video(expiring["id"]))
+        self.assertFalse(expiring_dir.exists())
+        self.assertIsNotNone(db.get_video(kept["id"]))
+        library.cancel_and_delete(kept["id"])
 
     def test_cancel_during_download(self):
         row = library.start_download("https://fake.test/slow")
@@ -297,6 +365,26 @@ class LibraryTest(unittest.TestCase):
     def test_unsupported_url_raises(self):
         with self.assertRaises(ValueError):
             library.start_download("ftp://nope")
+
+
+class RetentionSchedulerTest(unittest.TestCase):
+    def test_hourly_loop_purges_and_survives_one_cleanup_failure(self):
+        class StopAfterThree:
+            def __init__(self):
+                self.calls = 0
+
+            def wait(self, interval):
+                self.calls += 1
+                self.interval = interval
+                return self.calls >= 3
+
+        stop = StopAfterThree()
+        with patch.object(library, "purge_expired", side_effect=[RuntimeError("temporary"), []]) as purge, \
+                patch.object(library._LOG, "exception") as logged:
+            library._retention_loop(stop)
+        self.assertEqual(stop.interval, 3600)
+        self.assertEqual(purge.call_count, 2)
+        logged.assert_called_once()
 
 
 if __name__ == "__main__":

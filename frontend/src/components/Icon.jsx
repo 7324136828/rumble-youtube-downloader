@@ -24,6 +24,7 @@ const paths = {
   external: 'M14 3h7v7m0-7L10 14M10 3H4a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-6',
   folder: 'M3 7V5a2 2 0 0 1 2-2h5l2 4h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z',
   menu: 'M4 6h16M4 12h16M4 18h16', bolt: 'm13 2-9 12h7l-1 8L21 9h-8l0-7Z',
+  copy: 'M8 8h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V8Zm-5 8V5a2 2 0 0 1 2-2h9',
 };
 
 export default function Icon({ name, size = 20, className = '', ...props }) {

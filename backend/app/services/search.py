@@ -19,7 +19,9 @@ MAX_PAGE_BYTES = 2 * 1024 * 1024
 _NAMES = {"youtube": "YouTube", "rumble": "Rumble"}
 _VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}\Z")
 _RUMBLE_PATH = re.compile(r"/(?P<id>v[a-z0-9]+)(?:-[\w.-]+)?\.html\Z", re.ASCII)
+_RUMBLE_SHORT_PATH = re.compile(r"/(?P<id>v[a-z0-9]+)/?\Z", re.ASCII)
 _LOG = logging.getLogger(__name__)
+_OUTBOUND_LOG = logging.getLogger("uvicorn.error")
 
 
 class SearchError(Exception):
@@ -60,12 +62,13 @@ def _rumble_url(value: str) -> tuple[str, str] | None:
         return None
     try:
         parsed = urlsplit(urljoin("https://rumble.com", value))
-        match = _RUMBLE_PATH.fullmatch(parsed.path)
+        match = _RUMBLE_PATH.fullmatch(parsed.path) or _RUMBLE_SHORT_PATH.fullmatch(parsed.path)
         if (match and parsed.scheme in ("http", "https")
                 and parsed.hostname in ("rumble.com", "www.rumble.com")
                 and not parsed.username and not parsed.password
                 and parsed.port in (None, 80, 443)):
-            return match["id"], "https://rumble.com" + parsed.path
+            path = parsed.path if parsed.path.endswith(".html") else f"/{match['id']}.html"
+            return match["id"], "https://rumble.com" + path
     except ValueError:
         pass
     return None
@@ -79,6 +82,7 @@ def search_youtube(query: str, limit: int) -> list[SearchResult]:
                "--playlist-end", str(limit), "--socket-timeout", "8",
                "--retries", "0", "--extractor-retries", "0", "--no-cache-dir",
                "--quiet", "--no-warnings", "--", f"ytsearch{limit}:{query}"]
+    _OUTBOUND_LOG.info("External search request: yt-dlp %s (provider=youtube)", command[-1])
     try:
         process = subprocess.run(
             command, capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -211,10 +215,13 @@ def search_rumble(query: str, limit: int) -> list[SearchResult]:
         # Streaming otherwise uses an inactivity timeout; enforce a total
         # transfer deadline as well, including slowly trickling responses.
         with requests.Session(curl_options={CurlOpt.TIMEOUT_MS: 15000}) as session:
+            _OUTBOUND_LOG.info("External search request: GET %s (provider=rumble)", url)
             response = session.get(
                 url,
                 impersonate="chrome", timeout=15, allow_redirects=False, stream=True)
             try:
+                _OUTBOUND_LOG.info("External search response: GET %s -> HTTP %s (provider=rumble)",
+                                   url, response.status_code)
                 if response.status_code != 200:
                     raise SearchError(f"Rumble search returned HTTP {response.status_code}. Please try again shortly.")
                 for chunk in response.iter_content():

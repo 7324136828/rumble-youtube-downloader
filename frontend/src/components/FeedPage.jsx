@@ -4,6 +4,7 @@ import { connectorBadgeClass, connectorLabel, formatDuration, loadLikes, saveLik
 import CustomVideoPlayer from './CustomVideoPlayer';
 import RecommendationPanel from './RecommendationPanel';
 import PlaybackWarning from './PlaybackWarning';
+import MediaConversionButtons from './MediaConversionButtons';
 import useWatchHistory from '../hooks/useWatchHistory';
 import Icon from './Icon';
 import './FeedWatch.css';
@@ -31,6 +32,7 @@ export default function FeedPage({ videoId, navigate }) {
   const [likes, setLikes] = useState(loadLikes);
   const [notice, setNotice] = useState('');
   const [deleting, setDeleting] = useState(null);
+  const [streamOverrides, setStreamOverrides] = useState({});
   const containerRef = useRef(null);
   const itemRefs = useRef([]);
   const videoRefs = useRef(new Map());
@@ -180,7 +182,7 @@ export default function FeedPage({ videoId, navigate }) {
               const near = Math.abs(index - activeIndex) <= 1;
               return <article className="cf-feed-item" key={video.id} ref={(element) => { itemRefs.current[index] = element; }} aria-label={`Video ${index + 1} of ${videos.length}: ${video.title || video.file_name || 'Untitled video'}`} inert={active ? undefined : ''}>
                 <div className="cf-feed-stage">
-                  {near ? <CustomVideoPlayer ref={(element) => { if (element) videoRefs.current.set(video.id, element); else videoRefs.current.delete(video.id); }} src={video.stream_url} poster={video.thumbnail_url || undefined} title={video.title || video.file_name || 'Saved video'} autoPlay active={active} muted={muted} onMutedChange={updateMuted} loop variant="feed" onLoadedMetadata={(event) => restorePosition(video.id, event.currentTarget)} onTimeUpdate={(time) => { const second = Math.floor(time); if (positionSeconds.current[video.id] !== second) { positionSeconds.current[video.id] = second; rememberPosition(video.id, time); } }}>
+                  {near ? <CustomVideoPlayer ref={(element) => { if (element) videoRefs.current.set(video.id, element); else videoRefs.current.delete(video.id); }} src={streamOverrides[video.id] || video.conversions?.mp4?.stream_url || video.stream_url} poster={video.thumbnail_url || undefined} title={video.title || video.file_name || 'Saved video'} autoPlay active={active} muted={muted} onMutedChange={updateMuted} loop variant="feed" formatErrorActions={<MediaConversionButtons video={video} onMp4Ready={(url) => setStreamOverrides((previous) => ({ ...previous, [video.id]: url }))} />} onLoadedMetadata={(event) => restorePosition(video.id, event.currentTarget)} onTimeUpdate={(time) => { const second = Math.floor(time); if (positionSeconds.current[video.id] !== second) { positionSeconds.current[video.id] = second; rememberPosition(video.id, time); } }}>
                     <div className="cf-feed-overlay"><span className={connectorBadgeClass(video.connector)}>{connectorLabel(video.connector)}</span><h2>{video.title || video.file_name || 'Saved video'}</h2><p>{video.uploader || connectorLabel(video.connector)}{video.duration ? ` · ${formatDuration(video.duration)}` : ''}</p></div>
                   </CustomVideoPlayer> : <div className="cf-feed-placeholder">{video.thumbnail_url && <img src={video.thumbnail_url} alt="" />}</div>}
                 </div>

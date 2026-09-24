@@ -53,6 +53,7 @@ class Connector(ABC):
     id: str
     name: str
     domains: tuple[str, ...] = ()
+    accepts_download_settings = False
 
     def matches(self, url: str) -> bool:
         host = http_url_host(url)
@@ -64,7 +65,8 @@ class Connector(ABC):
     @abstractmethod
     def download(self, url: str, dest_dir: Path, quality: str = "best",
                  on_progress: Callable[[float, str], None] | None = None,
-                 cancel: threading.Event | None = None) -> DownloadResult:
+                 cancel: threading.Event | None = None,
+                 download_settings: dict | None = None) -> DownloadResult:
         ...
 
     def describe(self) -> dict:

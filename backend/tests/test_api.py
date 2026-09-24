@@ -38,7 +38,7 @@ class FakeConnector(Connector):
         return url.startswith("https://fake.test/")
 
     def download(self, url, dest_dir, quality="best", on_progress=None,
-                 cancel=None):
+                 cancel=None, download_settings=None):
         if "fail" in url:
             raise ConnectorError("boom")
         if "slow" in url:
@@ -68,6 +68,12 @@ FAKE = FakeConnector()
 class MediaApiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Module imports can happen after another suite has already loaded config.
+        # Isolate runtime paths here instead of relying on environment import order.
+        folder = Path(cls.enterClassContext(tempfile.TemporaryDirectory()))
+        for name, path in (("JOBS_ROOT", folder), ("JOBS_DB_PATH", folder / "jobs.db"),
+                           ("MEDIA_ROOT", folder / "media")):
+            cls.enterClassContext(patch.object(config, name, path))
         subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
              "-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=10",
@@ -177,6 +183,38 @@ class MediaApiTest(unittest.TestCase):
                               "best", tempfile.mkdtemp())
         resp = self.client.get(f"/api/media/{row['id']}/stream")
         self.assertEqual(resp.status_code, 409)
+
+    def test_on_demand_conversion_api_reports_and_serves_completed_file(self):
+        self._register_fake()
+        response = self.client.post("/api/media", json={
+            "urls": ["https://fake.test/ok"]})
+        video_id = response.json()[0]["id"]
+        self.addCleanup(library.cancel_and_delete, video_id)
+        self.assertEqual(library.wait_for(video_id, 15)["status"], "ready")
+
+        def write_mp3(source, target, cancel):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"converted audio")
+            return True
+
+        with patch.object(library.media, "convert_to_mp3", side_effect=write_mp3):
+            response = self.client.post(
+                f"/api/media/{video_id}/conversions/mp3")
+            self.assertEqual(response.status_code, 200)
+            conversion = library.wait_for_conversion(video_id, "mp3", 5)
+        self.assertEqual(conversion["status"], "completed")
+        payload = self.client.get(f"/api/media/{video_id}").json()
+        self.assertEqual(payload["conversions"]["mp3"]["status"], "completed")
+
+        response = self.client.get(
+            f"/api/media/{video_id}/conversions/mp3/download")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "audio/mpeg")
+        self.assertEqual(response.content, b"converted audio")
+
+    def test_conversion_api_rejects_unknown_formats(self):
+        response = self.client.post("/api/media/missing/conversions/wav")
+        self.assertEqual(response.status_code, 400)
 
     def test_native_webm_stream_and_download_keep_original_bytes_and_mime(self):
         self._register_fake()

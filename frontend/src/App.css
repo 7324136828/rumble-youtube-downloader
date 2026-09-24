@@ -1396,6 +1396,109 @@ a svg {
   gap: 7px;
   white-space: nowrap;
 }
+.keyword-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 720px;
+  padding: 7px 8px 7px 14px;
+  margin-bottom: 18px;
+  border: 1px solid #39333f;
+  border-radius: 10px;
+  background: #17161c;
+  color: #81778b;
+}
+.keyword-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #eee9f0;
+  font-size: 12px;
+}
+.keyword-search .btn-primary {
+  padding: 8px 15px;
+}
+.keyword-note,
+.keyword-progress {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #a99eae;
+  font-size: 11px;
+}
+.keyword-note {
+  max-width: 720px;
+  padding: 11px 13px;
+  margin-bottom: 20px;
+  border: 1px solid #403548;
+  border-radius: 8px;
+  background: #211b25;
+}
+.keyword-cloud-section {
+  margin-top: 28px;
+}
+.keyword-cloud {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-content: center;
+  flex-wrap: wrap;
+  gap: 10px 13px;
+  min-height: 220px;
+  padding: 28px;
+  border: 1px solid #302c37;
+  border-radius: 14px;
+  background: radial-gradient(circle at 50% 45%, #3b24324d, transparent 55%), #19181e;
+}
+.keyword-cloud button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 20px;
+  background: transparent;
+  color: #c99baa;
+  cursor: pointer;
+  transition: color .16s, background .16s, transform .16s;
+}
+.keyword-cloud button:hover,
+.keyword-cloud button[aria-pressed="true"] {
+  color: #fff;
+  background: #ff486621;
+  transform: translateY(-1px);
+}
+.keyword-cloud small {
+  color: #756b7b;
+  font-size: 9px;
+}
+.keyword-results {
+  margin-top: 32px;
+}
+.video-keyword-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 10px 0 12px;
+}
+.video-keyword-list button {
+  padding: 4px 7px;
+  border: 1px solid #453746;
+  border-radius: 12px;
+  background: #271f29;
+  color: #c9aabd;
+  font-size: 9px;
+  cursor: pointer;
+}
+.video-keyword-list button:hover {
+  border-color: #a65468;
+  color: #ffacb9;
+}
+.keyword-video-card .card-open {
+  margin-top: 3px;
+}
 .connector-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

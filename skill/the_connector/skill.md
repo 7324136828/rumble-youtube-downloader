@@ -235,6 +235,8 @@ Sessions use only their saved configuration. The backend does not load the repos
 
 Routing steps run in order. A probability group selects its first candidate by relative weight, then tries the other configured choices if needed. Each route can retry before moving on. A failure across all configured routes returns an error; a mock response is available only when a mock route is explicitly configured.
 
+Each probability selection also emits an INFO message in the backend console, for example `INFO:     127.0.0.1:54321 --- probabilistic chooser chose model gpt-5-nano (provider=openai)`. This logs the initial random choice once per probability group reached, before retries or fallbacks, for both session/agent chat and compatibility completions. It is independent of file logging and database auditing; calls outside an HTTP request show `unknown` as the client address.
+
 ```json
 {
   "system_prompt": "You are a helpful assistant. Use supplied conversation context.",
@@ -242,6 +244,11 @@ Routing steps run in order. A probability group selects its first candidate by r
   "context_window": 10,
   "memory_window": 20,
   "memory_scope": "all_sessions",
+  "memory_sources": {
+    "user_sessions": true,
+    "system_sessions": true,
+    "completion_events": true
+  },
   "sequences": [
     {
       "type": "probability",
@@ -280,10 +287,11 @@ Only `sequences` is required at the top level. It must contain 1-30 steps; proba
 | `context_window` | `10` | Recent messages from the current session; range 1-200 |
 | `memory_window` | `20` | Maximum archived messages included; range 0-200; `0` disables the archive |
 | `memory_scope` | `"all_sessions"` | Include other saved conversations, or use `"session"` for current-session history only |
+| `memory_sources` | All three sources enabled | Independently include `user_sessions`, `system_sessions`, and/or `completion_events` in persisted memory |
 
 ### Model effort
 
-Omitting `effort` selects the lowest supported level. There is no universal `easy` value. The capability registry in [model_capabilities.py](backend/app/model_capabilities.py) defines the levels the application currently supports; models without a registered effort control remain usable with the field omitted. Unsupported settings are rejected before a provider call.
+Omitting `effort` selects the lowest supported level for providers with a registered model-specific default. OpenRouter is the exception: omitting `effort` or setting it to `null` sends no reasoning-effort override, leaving the choice to OpenRouter and the upstream provider. There is no universal `easy` value. The capability registry in [model_capabilities.py](backend/app/model_capabilities.py) defines the levels the application currently supports; models without a registered effort control remain usable with the field omitted. Unsupported settings are rejected before a provider call.
 
 The following examples show the provider mappings. Query `/api/models/capabilities` for a particular model or version.
 
@@ -295,7 +303,7 @@ The following examples show the provider mappings. Query `/api/models/capabiliti
 | Claude Opus 4.6 | `low`, `medium`, `high`, `max` | `output_config.effort` |
 | Gemini 2.5 Flash / Flash-Lite | `none`, `low`, `medium`, `high` | SDK `thinking_config.thinking_budget`; REST `thinkingConfig.thinkingBudget`. [Gemini documentation](https://ai.google.dev/gemini-api/docs/thinking) |
 | Gemini 2.5 Pro | `low`, `medium`, `high` | Same Gemini budget fields |
-| OpenRouter | Levels of the registered underlying model | `reasoning.effort`, carried through `extra_body` in the OpenAI SDK. [OpenRouter documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) |
+| OpenRouter (any model) | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | `reasoning.effort`, carried through `extra_body` in the OpenAI SDK; `null` omits `reasoning` entirely. [OpenRouter documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) |
 | Ollama `gpt-oss` (including model tags) | `low`, `medium`, `high` | Top-level `think`. [Ollama documentation](https://docs.ollama.com/capabilities/thinking) |
 
 For Gemini 2.5, this application's named levels map to token budgets: `none` = 0, `low` = 1,024, `medium` = 8,192, and `high` = 24,576. These are application presets for the provider's budget control. Flash models default to `none`; Pro defaults to `low`.
@@ -304,11 +312,11 @@ The OpenAI Responses fallback above belongs to the web-chat connector. The exter
 
 ## Saved memory
 
-Past Memory retrieves persisted SQLite messages and supplies them to the configured model for both chat and agent requests. It survives application restarts. The recent context contains up to `context_window` messages from the current session, counted as individual messages rather than user/assistant pairs.
+Past Memory retrieves persisted SQLite messages and successful OpenAI-compatible completion responses and supplies them to the configured model for chat, agent, and compatible completion requests. It survives application restarts. The recent context contains up to `context_window` messages from the current web session, counted as individual messages rather than user/assistant pairs.
 
-The archive supplies older messages from that session and, with the default `memory_scope: "all_sessions"`, messages from other saved active or closed sessions. It includes up to `memory_window` messages, capped at 4,000 characters per message and 16,000 characters for the encoded archive. Recent context is excluded from the archive to avoid duplicates. Archived text is marked as historical data, and bounded retrieval can omit older facts.
+The archive puts today's raw memory first (up to `memory_window` items), followed by daily summaries for the preceding seven completed UTC days. On the first memory-enabled request after a day ends, that day's eligible rows from `messages` and `completions_response` are compacted through the configured LLM into fewer than 200 words and saved in `memory_summary`; a bounded extractive fallback keeps memory available if that call fails. Older summaries are removed. Raw session transcripts and compatible response records remain stored. Each item is capped at 4,000 characters, today's section at 8,000 encoded characters, and the complete encoded archive at 16,000 characters. Recent web-session context is excluded from today's archive to avoid duplicates. Archived text is marked as untrusted historical data, and bounded retrieval can omit older facts.
 
-Setting `past_memory: false` disables retrieval for that session and excludes that session as a source for other conversations. Its transcript is still saved. Setting `memory_scope: "session"` restricts retrieval to the current session's own history.
+Setting `past_memory: false` disables retrieval for that session or compatible configuration and excludes that session as a source for other conversations. Its transcript is still saved. `memory_sources` independently controls whether persisted user-session messages, system-session messages, and successful compatible completion events can be loaded. All three default to `true` for backward compatibility, and the configuration screen exposes them as checkboxes. Setting `memory_scope: "session"` restricts a session to its own history; for a sessionless compatible call, it restricts memory to compatible responses. The default `all_sessions` scope combines the selected eligible sources.
 
 Memory is scoped to this application's local database, which is intended for a single user. There is no per-account separation. **Close session** archives the conversation and clears temporary files; it does not erase its stored messages. Closed sessions can still contribute memory when enabled and remain accessible by session ID for viewing or export.
 
@@ -326,6 +334,7 @@ Content-Type: application/json
 
 {
   "title": "My conversation",
+  "user_session": false,
   "config": {
     "sequences": [{"provider": "mock", "model": "mock-assistant", "retries": 0}],
     "past_memory": true
@@ -333,7 +342,9 @@ Content-Type: application/json
 }
 ```
 
-Alternatively, create from an active library entry with `{ "title": "My conversation", "config_id": "the-library-record-id" }`, or from history with `{ "title": "My conversation", "history_id": "the-history-entry-id" }`. Provide **exactly one** of `config`, `config_id`, or `history_id`. `config_id` is the saved record's ID, not its `model_id`. Creation copies the selected configuration into the session.
+Alternatively, create from an active library entry with `{ "title": "My conversation", "config_id": "the-library-record-id" }`, or from history with `{ "title": "My conversation", "history_id": "the-history-entry-id" }`. Provide **exactly one** of `config`, `config_id`, or `history_id`. `config_id` is the saved record's ID, not its `model_id`. Creation copies the selected configuration into the session. `user_session` defaults to `false`, classifying direct API sessions as system sessions; the web UI sends `true` for sessions it creates. The flag is persisted and returned with session metadata.
+
+`POST /api/chat` and `POST /api/agent/run` on a system session store the incoming message and return the deterministic mocked assistant response `message received` without invoking a configured provider. System sessions are hidden from the web session list by default. Enable **Show System Sessions** in the sidebar settings to inspect them; this display preference is stored in the browser.
 
 Creation returns HTTP 201 with `session_id` and session metadata. `title` is optional. `POST /api/new` is a deprecated alias with the same contract. Legacy top-level `provider`, `model`, or memory overrides are rejected.
 
@@ -373,13 +384,30 @@ The reply includes the assistant content, selected provider/model, token usage, 
 
 `GET /api/agent/tools` lists available tool schemas. `POST /api/agent/step` executes `{ "tool": "calculator", "arguments": { "expression": "25 * 4" } }`. `POST /api/agent/register-tool` registers a named tool schema and optional external webhook endpoint.
 
+The chat renderer recognizes fenced `video` blocks returned in assistant text. A block contains one JSON object or an array of up to 20 objects. `url` (also `src`, `video_url`, or `play_url`) is required; `thumbnail`/`poster`, `title`, `description`, `uploader`, and `downloaded_date` are optional. HTTP(S) and same-origin relative media URLs are accepted; unsafe schemes remain visible as ordinary code rather than being loaded. For example:
+
+````markdown
+```video
+{
+  "url": "https://media.example/video.mp4",
+  "thumbnail": "https://media.example/thumbnail.jpg",
+  "title": "Example video",
+  "uploader": "Example channel",
+  "description": "An optional description.",
+  "downloaded_date": "2026-09-24"
+}
+```
+````
+
+The browser must be able to stream the supplied media URL; a platform watch-page URL is not itself a playable media stream. Agent instructions preserve `video` blocks found in tool observations so they can reach the renderer unchanged.
+
 The application endpoints use FastAPI errors such as `{ "detail": "..." }`: 422 for invalid request bodies, 404 for missing records, 409 for closed sessions or inactive configurations, and 502 when configured providers fail.
 
 ## OpenAI-compatible API for external agents
 
 Use **`http://127.0.0.1:8301/v1`** as the client base URL. The request's `model` must be an active library `model_id`, such as `connector-demo` or `my-assistant`; a raw upstream name is not automatically exposed. `GET /v1/models` returns the OpenAI `{ "object": "list", "data": [...] }` shape with active entries and available context metadata.
 
-Completion requests are **stateless**. Send the full conversation and tool results in `messages` each time. The selected config's system prompt is prepended and its routes and efforts apply, but no web session transcript or archived memory is injected. Compatibility calls do not create web sessions. Hermes or another calling client executes its own tools; the gateway forwards tool definitions, returns structured `tool_calls`, and accepts results on a subsequent request. `/api/agent/run` is the separate session-based agent that executes this application's local tools.
+Completion requests remain **sessionless**: send the active conversation and tool results in `messages` each time. They do not create web sessions, but when the selected configuration has `past_memory: true`, its system prompt receives the bounded daily memory archive described above. Every successful buffered response (including a response later emitted as SSE) is saved by itself in `completions_response`; request payloads are not copied into that table. Hermes or another calling client executes its own tools; the gateway forwards tool definitions, returns structured `tool_calls`, and accepts results on a subsequent request. `/api/agent/run` is the separate session-based agent that executes this application's local tools.
 
 ### Text request with curl
 
