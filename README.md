@@ -266,6 +266,34 @@ player preferences use the current browser's local storage. There are no account
 or cloud synchronization. Copy link copies the original source URL. In-app video routes refer to this
 running app and require access to the same backend library.
 
+### MP3 playback and your own media
+
+Each saved item has a **Convert to MP3** action. Once conversion completes, Watch
+and Swipe feed play the MP3 while keeping its thumbnail visible. The original
+video is retained; use **Play video** to switch back or **Play MP3** to select audio
+again. MP3 files can also be downloaded separately. In **Downloads**, select
+individual cards or **Select all visible**, then **Convert selected to MP3** to
+queue a batch. Conversion failures remain visible and can be retried.
+
+Use **Upload your own media** in My library or Downloads to add one or more local
+audio/video files. MP3, MP4, and other formats readable by FFmpeg are accepted;
+audio is prepared for MP3 playback, and videos that need browser conversion offer
+the existing MP4 conversion action in the player. Unsupported or corrupt files
+report an error. Uploaded items appear alongside downloaded items and follow the
+same expiration settings.
+Uploads allow up to 5 GiB per media file by default (`MAX_UPLOAD_BYTES` overrides
+this limit), and up to 10 MiB per custom thumbnail.
+
+You can supply an optional title for a single upload and a JPEG, PNG, or WebP
+thumbnail for the selected files. **Custom thumbnail** on each saved card also
+lets you replace its artwork later. Audio uses that artwork throughout playback.
+Audio items with artwork also offer **Create MP4 with thumbnail**. This produces
+an H.264/AAC MP4 whose video track is the still thumbnail for the full duration
+of the audio. The original audio and its MP3 playback copy are retained.
+When no playback format has been explicitly selected, the players prefer a
+completed browser-compatible MP4, then a completed MP3 with thumbnail, before
+trying the original file. **Play video** and **Play MP3** remain explicit overrides.
+
 ## Custom players
 
 **Watch** provides a widescreen player, title and creator information, description,
@@ -277,10 +305,15 @@ ratio inside the vertical presentation.
 The shared `CustomVideoPlayer` provides:
 
 - Play/pause, seek timeline, elapsed/total time, and buffered progress.
-- Mute and volume controls, plus playback speeds from 0.5x to 2x.
+- Mute and volume controls, plus playback speeds from 0.5x to 2x, remembered across videos.
 - Fullscreen and picture-in-picture buttons when the browser exposes those APIs.
 - Keyboard-accessible controls, loading states, playback errors, and retry.
-- Inline playback and muted autoplay fallback when browser autoplay policy requires it.
+- Inline playback with a saved preference to start muted or with sound.
+
+Under **Settings → Playback**, choose whether playback starts with sound and set
+your preferred speed. Changing mute or speed in the player updates the same
+browser-local preferences for Watch and Swipe feed. If the browser blocks
+autoplay with sound, the player asks you to press Play and preserves your choice.
 
 When the player is focused: Space or K toggles playback, M toggles mute, F toggles
 fullscreen, Left/Right seeks five seconds, and J/L seeks ten seconds. Up/Down
@@ -500,14 +533,17 @@ job output directories, and database connections close after each operation.
 | DELETE | `/api/recommendations/watch-later/{catalog_id}` | Remove Watch later membership; return `{removed, revision}` |
 | POST | `/api/resolve` | Route `{urls}` to connectors; does not check download availability |
 | POST | `/api/media` | Start downloads with `{urls, quality}`; returns queued items |
+| POST | `/api/media/upload` | Upload multipart `file`, optional `thumbnail`, and optional `title`; returns a library item |
 | GET | `/api/media` / `/api/media/{id}` | Library list (`?status=`) or item detail |
 | DELETE | `/api/media/{id}` | Cancel pending work and remove the item/files |
 | GET | `/api/media/{id}/stream` | Seekable playback; 409 until ready |
 | GET | `/api/media/{id}/thumbnail` | Thumbnail; 404 if unavailable |
+| POST | `/api/media/{id}/thumbnail` | Replace artwork using multipart `thumbnail`; returns the updated item |
+| PATCH | `/api/media/{id}/playback` | Select `{format: "original"}` or a completed `{format: "mp3"}` |
 | GET | `/api/media/{id}/download` | File attachment; 409 until ready |
 | POST | `/api/media/{id}/conversions/{format}` | Start an on-demand `mp4` or `mp3` conversion |
 | GET | `/api/media/{id}/conversions/{format}/download` | Download a completed derived file |
-| GET | `/api/media/{id}/conversions/mp4/stream` | Seekable playback of a completed compatible MP4 |
+| GET | `/api/media/{id}/conversions/{format}/stream` | Seekable playback of a completed MP4 or MP3 |
 | POST | `/api/convert` | Create legacy job from `{urls, options}` |
 | GET | `/api/jobs` / `/api/jobs/{id}` | Legacy job list/detail, including files |
 | GET | `/api/jobs/{id}/logs` | Execution log |
@@ -521,7 +557,8 @@ Media items expose `id`, `source_url`, `connector`, `status`, `progress`, `stage
 `quality`, available title/creator/duration/dimensions, timestamps, `retention_days`,
 `expires_at`, `retention_override` (an individual expiration choice), file size,
 `error_message`, `playback_warning`, `stream_url`, `thumbnail_url`, `download_url`,
-`file_name`, generated `keywords`, and persistent `conversions` state for MP4 and MP3 outputs.
+`file_name`, `media_kind`, `playback_format`, generated `keywords`, and persistent
+`conversions` state for MP4 and MP3 outputs.
 
 Routes include `#/library`, `#/library/add`, `#/search`, `#/keywords`, `#/recommendations`, `#/settings`, `#/feed`, `#/feed/<id>`, `#/watch`,
 `#/watch/<id>`, `#/watch-history`, `#/watch-later`, `#/downloads`, `#/convert`,
@@ -580,6 +617,7 @@ The `test:webm` suite uses real browser media APIs to decode, play, and seek loc
 VP9/Opus and AV1/Opus WebM fixtures through `CustomVideoPlayer`; both passed in
 Chrome 153. Its fixture-generation commands are recorded in
 [`frontend/tests/native-webm.fixtures.md`](frontend/tests/native-webm.fixtures.md).
+It also checks real MP3 playback and seeking with persistent thumbnail artwork.
 
 The offline backend suite uses fake connectors and videos
 generated locally with FFmpeg, covering connector routing, playlist rejection,

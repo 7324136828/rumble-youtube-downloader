@@ -9,5 +9,8 @@
 .media-conversion-error { flex-basis: 100%; color: #ff9dad; font-size: 10px; line-height: 1.4; text-align: center; }
 .media-conversion-actions--compact { display: inline-flex; justify-content: flex-start; }
 .media-conversion-actions--compact .media-conversion-button { min-height: 35px; }
+.cf-feed-conversions { display: flex; justify-content: center; margin: 0 0 14px; }
+.media-conversion-button:disabled { cursor: not-allowed; opacity: .7; }
+.media-conversion-button.is-working:disabled { cursor: wait; }
 @keyframes media-conversion-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .media-conversion-button.is-working svg { animation: none; } }

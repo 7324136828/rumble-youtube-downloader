@@ -19,6 +19,8 @@ JOBS_DB_PATH = Path(
 
 MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT") or JOBS_ROOT / "library").resolve()
 MAX_CONCURRENT_DOWNLOADS = max(1, int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "2")))
+MAX_UPLOAD_BYTES = max(1, int(os.environ.get("MAX_UPLOAD_BYTES", str(5 * 1024 ** 3))))
+MAX_THUMBNAIL_BYTES = 10 * 1024 ** 2
 
 # Optional Netscape-format cookie file. Browser-cookie extraction is an explicit
 # persisted download preference; this environment override supports headless hosts.

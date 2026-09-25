@@ -14,6 +14,10 @@
 .cvp *, .cvp *::before, .cvp *::after { box-sizing: border-box; }
 .cvp:focus-visible { outline: 2px solid var(--cvp-accent); outline-offset: -2px; }
 .cvp .cvp-video { display: block; width: 100%; height: 100%; max-height: none; object-fit: contain; background: #09090c; }
+.cvp-audio-artwork { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(ellipse at center, #392a43, #100d15); pointer-events: none; }
+.cvp-audio-artwork img { width: 100%; height: 100%; object-fit: contain; }
+.cvp-audio-placeholder { color: #dfcced; font-size: clamp(60px, 12vw, 140px); }
+.cvp-audio-label { position: absolute; top: 16px; left: 16px; border-radius: 5px; padding: 5px 8px; background: #16111de0; color: #eee2f5; font-size: 11px; }
 .cvp--feed { height: 100%; aspect-ratio: auto; }
 .cvp .cvp-surface { position: absolute; inset: 0; display: grid; place-items: center; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; color: #fff; cursor: pointer; }
 .cvp .cvp-surface:disabled { cursor: default; }
@@ -64,7 +68,7 @@
   .cvp-control-row { gap: 3px; }
   .cvp .cvp-volume[type='range'] { display: none; }
   .cvp .cvp-button { width: 32px; height: 36px; }
-  .cvp .cvp-speed { display: none; }
+  .cvp .cvp-speed { width: 48px; font-size: 10px; }
   .cvp-big-play { width: 56px; height: 56px; }
 }
 @media (pointer: coarse) {

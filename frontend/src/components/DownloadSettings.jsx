@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { getDownloadSettings, updateDownloadSettings } from '../services/api';
 import Icon from './Icon';
 import LinkSettings from './LinkSettings';
+import PlaybackSettings from './PlaybackSettings';
 import './DownloadSettings.css';
 
 const withCookieDefaults = (value) => ({
@@ -76,6 +77,7 @@ export default function DownloadSettings() {
 
   return <div className="page-wrap download-settings">
     <div className="page-heading"><div><p className="eyebrow">YOUR DOWNLOADS, YOUR CHOICE</p><h1>Download settings<span className="accent">.</span></h1><p className="page-description">Choose what happens after a video finishes downloading.</p></div></div>
+    <PlaybackSettings />
     {loading && <p className="muted" role="status">Loading download settings...</p>}
     {error && <div className="error-banner" role="alert"><span>{error}</span>{!settings && <button className="link-btn" onClick={() => setRetry((value) => value + 1)}>Retry loading</button>}</div>}
     {notice && <div className="success-banner" role="status"><Icon name="check" size={17} /><span>{notice}</span></div>}

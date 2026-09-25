@@ -1,6 +1,6 @@
-﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { deleteMedia, getMediaItems } from '../services/api';
-import { connectorBadgeClass, connectorLabel, formatDuration, loadLikes, saveLikes, setPlayerMode, toggleLike } from '../mediaUtils';
+import { connectorBadgeClass, connectorLabel, formatDuration, mediaPlayback, loadLikes, saveLikes, setPlayerMode, toggleLike } from '../mediaUtils';
 import CustomVideoPlayer from './CustomVideoPlayer';
 import RecommendationPanel from './RecommendationPanel';
 import PlaybackWarning from './PlaybackWarning';
@@ -9,9 +9,6 @@ import useWatchHistory from '../hooks/useWatchHistory';
 import Icon from './Icon';
 import './FeedWatch.css';
 
-function readMuted() {
-  try { return localStorage.getItem('clipfeed.muted') !== '0'; } catch { return true; }
-}
 function rememberPosition(id, time) {
   try { sessionStorage.setItem(`clipfeed.position.${id}`, String(time)); } catch { /* Storage is optional. */ }
 }
@@ -28,11 +25,9 @@ export default function FeedPage({ videoId, navigate }) {
   const [retry, setRetry] = useState(0);
   const [loadedRevision, setLoadedRevision] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [muted, setMuted] = useState(readMuted);
   const [likes, setLikes] = useState(loadLikes);
   const [notice, setNotice] = useState('');
   const [deleting, setDeleting] = useState(null);
-  const [streamOverrides, setStreamOverrides] = useState({});
   const containerRef = useRef(null);
   const itemRefs = useRef([]);
   const videoRefs = useRef(new Map());
@@ -135,10 +130,6 @@ export default function FeedPage({ videoId, navigate }) {
   }, [goTo]);
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
 
-  const updateMuted = (next) => {
-    setMuted(next);
-    try { localStorage.setItem('clipfeed.muted', next ? '1' : '0'); } catch { /* Session state still works. */ }
-  };
   const openWatch = (video) => {
     const element = videoRefs.current.get(video.id);
     if (element) rememberPosition(video.id, element.currentTime);
@@ -146,7 +137,7 @@ export default function FeedPage({ videoId, navigate }) {
   };
   const copySource = async (video) => {
     try {
-      if (!video.source_url || !navigator.clipboard?.writeText) throw new Error('unavailable');
+      if (video.connector === 'upload' || !video.source_url || !navigator.clipboard?.writeText) throw new Error('unavailable');
       await navigator.clipboard.writeText(video.source_url);
       showNotice('Source link copied');
     } catch { showNotice('Could not copy the link. Open the original video from Watch view.'); }
@@ -162,6 +153,7 @@ export default function FeedPage({ videoId, navigate }) {
     } catch (err) { showNotice(`Could not delete video: ${err.message}`); }
     finally { setDeleting(null); }
   };
+  const updateMedia = useCallback((current) => setVideos((previous) => previous?.map((item) => item.id === current.id ? current : item)), []);
   const activeVideo = videos?.[activeIndex];
   useWatchHistory(activeVideo?.id, getActivePlayer, !error);
   return (
@@ -170,7 +162,8 @@ export default function FeedPage({ videoId, navigate }) {
         <div><div className="cf-eyebrow">YOUR PERSONAL CHANNEL</div><h1>The feed<span className="cf-heading-dot">.</span></h1><p>Your saved videos. One swipe away.</p></div>
         <div className="cf-mode-switch" aria-label="Player view"><button className="active" aria-pressed="true"><Icon name="feed" size={17} /> Feed</button><button aria-pressed="false" onClick={() => activeVideo ? openWatch(activeVideo) : navigate('watch')}><Icon name="watch" size={17} /> Watch</button></div>
       </header>
-      {!error && <PlaybackWarning video={activeVideo} />}
+      {!error && !mediaPlayback(activeVideo).audioOnly && <PlaybackWarning video={activeVideo} />}
+      {!error && activeVideo && <div className="cf-feed-conversions"><MediaConversionButtons key={activeVideo.id} video={activeVideo} formats={activeVideo.media_kind === 'audio' ? ['mp4', 'mp3'] : ['mp3']} compact onMediaUpdated={updateMedia} /></div>}
       {error ? <div className="cf-view-state" role="alert"><div className="cf-state-icon"><Icon name="refresh" size={30} /></div><h2>We couldn't load your feed</h2><p>{error}</p><button className="btn-primary" onClick={() => setRetry((value) => value + 1)}><Icon name="refresh" size={16} /> Try again</button></div>
         : videos === null ? <div className="cf-view-state" role="status"><span className="cf-loading-ring" /><p>Getting your feed ready...</p></div>
         : !videos.length ? <div className="cf-view-state cf-feed-empty-state"><div className="cf-empty-stack" aria-hidden="true"><div /><div /><div><Icon name="play" size={34} /><span>Your next favorite</span></div></div><div className="cf-eyebrow">A FEED THAT'S ALL YOURS</div><h2>Start with a video you love.</h2><p>Save a video from YouTube, Rumble, or another supported platform. Then swipe through your own collection.</p><button className="btn-primary" onClick={() => navigate('library')}><Icon name="plus" size={17} /> Add your first video</button><span className="cf-empty-caption">Your collection, your pace.</span></div>
@@ -182,7 +175,7 @@ export default function FeedPage({ videoId, navigate }) {
               const near = Math.abs(index - activeIndex) <= 1;
               return <article className="cf-feed-item" key={video.id} ref={(element) => { itemRefs.current[index] = element; }} aria-label={`Video ${index + 1} of ${videos.length}: ${video.title || video.file_name || 'Untitled video'}`} inert={active ? undefined : ''}>
                 <div className="cf-feed-stage">
-                  {near ? <CustomVideoPlayer ref={(element) => { if (element) videoRefs.current.set(video.id, element); else videoRefs.current.delete(video.id); }} src={streamOverrides[video.id] || video.conversions?.mp4?.stream_url || video.stream_url} poster={video.thumbnail_url || undefined} title={video.title || video.file_name || 'Saved video'} autoPlay active={active} muted={muted} onMutedChange={updateMuted} loop variant="feed" formatErrorActions={<MediaConversionButtons video={video} onMp4Ready={(url) => setStreamOverrides((previous) => ({ ...previous, [video.id]: url }))} />} onLoadedMetadata={(event) => restorePosition(video.id, event.currentTarget)} onTimeUpdate={(time) => { const second = Math.floor(time); if (positionSeconds.current[video.id] !== second) { positionSeconds.current[video.id] = second; rememberPosition(video.id, time); } }}>
+                  {near ? <CustomVideoPlayer ref={(element) => { if (element) videoRefs.current.set(video.id, element); else videoRefs.current.delete(video.id); }} src={mediaPlayback(video).src} audioOnly={mediaPlayback(video).audioOnly} poster={video.thumbnail_url || undefined} title={video.title || video.file_name || 'Saved video'} autoPlay active={active} loop variant="feed" formatErrorActions={<MediaConversionButtons video={video} onMediaUpdated={updateMedia} />} onLoadedMetadata={(event) => restorePosition(video.id, event.currentTarget)} onTimeUpdate={(time) => { const second = Math.floor(time); if (positionSeconds.current[video.id] !== second) { positionSeconds.current[video.id] = second; rememberPosition(video.id, time); } }}>
                     <div className="cf-feed-overlay"><span className={connectorBadgeClass(video.connector)}>{connectorLabel(video.connector)}</span><h2>{video.title || video.file_name || 'Saved video'}</h2><p>{video.uploader || connectorLabel(video.connector)}{video.duration ? ` · ${formatDuration(video.duration)}` : ''}</p></div>
                   </CustomVideoPlayer> : <div className="cf-feed-placeholder">{video.thumbnail_url && <img src={video.thumbnail_url} alt="" />}</div>}
                 </div>
@@ -190,7 +183,7 @@ export default function FeedPage({ videoId, navigate }) {
                   <button className={likes.has(video.id) ? 'is-liked' : ''} aria-label={likes.has(video.id) ? 'Unlike video' : 'Like video'} aria-pressed={likes.has(video.id)} onClick={() => setLikes((previous) => toggleLike(previous, video.id))}><span><Icon name="heart" size={23} /></span><small>{likes.has(video.id) ? 'Liked' : 'Like'}</small></button>
                   <button onClick={() => openWatch(video)} aria-label="Open in Watch view"><span><Icon name="watch" size={23} /></span><small>Watch</small></button>
                   {video.download_url && <a href={video.download_url} download aria-label="Download video file"><span><Icon name="download" size={23} /></span><small>Download</small></a>}
-                  <button onClick={() => copySource(video)} aria-label="Copy original video link"><span><Icon name="link" size={22} /></span><small>Copy link</small></button>
+                  {video.connector !== 'upload' && video.source_url && <button onClick={() => copySource(video)} aria-label="Copy original video link"><span><Icon name="link" size={22} /></span><small>Copy link</small></button>}
                   <button className="cf-feed-delete" disabled={deleting === video.id} onClick={() => removeVideo(video)} aria-label="Delete video"><span><Icon name="trash" size={20} /></span><small>{deleting === video.id ? 'Deleting' : 'Remove'}</small></button>
                 </div>
               </article>;

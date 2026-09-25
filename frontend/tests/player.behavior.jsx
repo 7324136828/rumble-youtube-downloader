@@ -1,6 +1,7 @@
 ﻿import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import CustomVideoPlayer from '../src/components/CustomVideoPlayer.jsx';
+import PlaybackSettings from '../src/components/PlaybackSettings.jsx';
 
 // Run in a real browser; media APIs are deterministic fakes for race/error coverage.
 // No testing framework or external video/network dependency is needed.
@@ -122,6 +123,8 @@ async function input(element, value) {
   await event(element, element instanceof HTMLSelectElement ? 'change' : 'input');
 }
 async function test(name, body) {
+  localStorage.clear();
+  localStorage.setItem('clipfeed.muted', '0');
   playCalls = pauseCalls = fullscreenRequests = pipRequests = pipExits = webkitFullscreenRequests = webkitPresentationChanges = 0;
   fakeFullscreen = fakePip = null;
   playBehavior = successfulPlay;
@@ -171,14 +174,59 @@ await test('Volume, mute, and speed update the video and visible controls', asyn
   equal(lastVideo.playbackRate, 1.5, 'Playback speed');
 });
 
-await test('Autoplay retries muted only when browser policy rejects sound', async () => {
+await test('Blocked sound autoplay keeps the preference and prompts for a user gesture', async () => {
   const changed = [];
   playBehavior = (video) => video.muted ? successfulPlay(video) : Promise.reject(new DOMException('Sound blocked', 'NotAllowedError'));
   await render({ src: '/mock-video.mp4', autoPlay: true, onMutedChange: (value) => changed.push(value) });
-  equal(playCalls, 2, 'Muted fallback attempts once');
-  equal(lastVideo.muted, true, 'Fallback is muted');
-  equal(lastVideo.paused, false, 'Fallback plays');
-  equal(changed.join(','), 'true', 'Mute change callback');
+  equal(playCalls, 1, 'No silent muted retry');
+  equal(lastVideo.muted, false, 'Sound preference remains enabled');
+  equal(lastVideo.paused, true, 'Waits for user gesture');
+  equal(changed.length, 0, 'No forced mute notification');
+  equal(localStorage.getItem('clipfeed.muted'), '0', 'Saved preference remains enabled');
+  assert(find('[role="status"]').textContent.includes('Press play to start with sound'), 'Clear start prompt');
+  playBehavior = successfulPlay;
+  await click(button('Play (K)'));
+  equal(lastVideo.paused, false, 'User can start playback');
+  equal(lastVideo.muted, false, 'User gesture starts with sound');
+});
+
+await test('Playback settings and mute control persist across different players', async () => {
+  localStorage.clear();
+  await act(async () => root.render(<PlaybackSettings />));
+  const setting = find('#playback-start-sound');
+  equal(setting.checked, false, 'Sound starts disabled');
+  await click(setting);
+  equal(localStorage.getItem('clipfeed.muted'), '0', 'Setting saves sound');
+  await render({ src: '/first.mp4', autoPlay: true });
+  equal(lastVideo.muted, false, 'Next player starts with sound');
+  await click(button('Mute (M)'));
+  await render({ key: 'another-player', src: '/second.mp4' });
+  equal(lastVideo.muted, true, 'Next player preserves muted preference');
+});
+
+await test('Speed survives a source change, browser metadata reset, and player remount', async () => {
+  await render({ src: '/first.mp4' });
+  await input(find('select'), 1.5);
+  equal(localStorage.getItem('clipfeed.speed'), '1.5', 'Speed saved');
+  await render({ src: '/second.mp4' });
+  mediaState(lastVideo).playbackRate = 1;
+  await metadata();
+  equal(lastVideo.playbackRate, 1.5, 'Metadata reapplies saved speed');
+  await render({ key: 'another-player', src: '/third.mp4' });
+  equal(lastVideo.playbackRate, 1.5, 'New player restores saved speed');
+  equal(find('select').value, '1.5', 'Speed control reflects preference');
+});
+
+await test('Audio keeps thumbnail visible while playing and preserves the media ref', async () => {
+  const ref = React.createRef();
+  await render({ ref, src: '/audio.mp3', audioOnly: true, poster: '/cover.jpg', autoPlay: true });
+  equal(lastVideo.paused, false, 'Audio plays');
+  equal(ref.current, lastVideo, 'Audio preserves ref contract for watch history');
+  equal(find('.cvp-audio-artwork img').getAttribute('src'), '/cover.jpg', 'Artwork remains during playback');
+  assert(find('[role="region"]').getAttribute('aria-label').includes('audio player'), 'Audio is labeled');
+  equal(host.querySelector('[aria-label="Picture-in-picture"]'), null, 'Audio does not offer a blank PiP window');
+  await render({ src: '/video.mp4', audioOnly: false });
+  equal(host.querySelector('.cvp-audio-artwork'), null, 'Switching back to video removes artwork overlay');
 });
 
 await test('Inactive players never start and active transitions pause playback', async () => {

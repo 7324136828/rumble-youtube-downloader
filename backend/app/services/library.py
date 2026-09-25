@@ -1,6 +1,9 @@
-"""Persistent video library downloads via connectors."""
+"""Persistent downloads, local media uploads, and playable derivatives."""
 import logging
+import math
+import re
 import shutil
+import tempfile
 import threading
 import time
 import uuid
@@ -15,6 +18,8 @@ from . import db, media, video_keywords, watch_later_thumbnails
 _ACTIVE: dict[str, dict] = {}
 _CONVERSIONS: dict[tuple[str, str], dict] = {}
 _LOCK = threading.Lock()
+_MEDIA_EDIT_LOCK = threading.RLock()
+_DELETING: set[str] = set()
 _SLOTS = threading.Semaphore(config.MAX_CONCURRENT_DOWNLOADS)
 _CONVERSION_FORMATS = {"mp4", "mp3"}
 _LOG = logging.getLogger(__name__)
@@ -98,8 +103,200 @@ def start_download(url: str, quality: str = "best") -> dict:
     return row
 
 
+class UploadTooLarge(ValueError):
+    pass
+
+
+def _copy_upload(upload, target: Path, maximum: int) -> None:
+    size = 0
+    with target.open("wb") as output:
+        while chunk := upload.read(1024 * 1024):
+            size += len(chunk)
+            if size > maximum:
+                raise UploadTooLarge(f"The uploaded file exceeds the {maximum // (1024 ** 2)} MB limit.")
+            output.write(chunk)
+    if not size:
+        raise ValueError("The uploaded file is empty.")
+
+
+def _upload_extension(info: dict, filename: str) -> str:
+    formats = set(info.get("format", {}).get("format_name", "").split(","))
+    for names, suffix in (({"mov", "mp4"}, ".mp4"), ({"mp3"}, ".mp3"),
+                           ({"wav"}, ".wav"), ({"flac"}, ".flac"),
+                           ({"ogg"}, ".ogg"), ({"aac"}, ".aac"),
+                           ({"avi"}, ".avi"), ({"asf"}, ".asf"),
+                           ({"mpegts"}, ".ts"), ({"mpeg"}, ".mpg"),
+                           ({"flv"}, ".flv"), ({"aiff"}, ".aiff")):
+        if formats & names:
+            return suffix
+    if formats & {"matroska", "webm"}:
+        codecs = {stream.get("codec_name") for stream in info["streams"]
+                  if stream.get("codec_type") in ("audio", "video")}
+        return ".webm" if codecs <= {"vp8", "vp9", "av1", "opus", "vorbis"} else ".mkv"
+    suffix = Path(filename.replace("\\", "/")).suffix.lower()
+    return suffix if re.fullmatch(r"\.[a-z0-9]{1,8}", suffix) else ".media"
+
+
+def start_upload(upload, filename: str, title: str | None = None, thumbnail=None) -> dict:
+    """Persist and validate multipart streams, then prepare local playback in a worker."""
+    settings = dict(db.get_download_settings())
+    video_id = str(uuid.uuid4())
+    media_dir = temp_manager.library_root() / video_id
+    media_dir.mkdir()
+    source = media_dir / "original.upload"
+    try:
+        _copy_upload(upload, source, config.MAX_UPLOAD_BYTES)
+        info = media.probe_upload(source)
+        video_stream = next((s for s in info["streams"] if s.get("codec_type") == "video"
+                             and not s.get("disposition", {}).get("attached_pic")), None)
+        has_audio = any(s.get("codec_type") == "audio" for s in info["streams"])
+        if video_stream is None and not has_audio:
+            raise ValueError("The uploaded file does not contain a playable audio or video track.")
+        media_kind = "video" if video_stream is not None else "audio"
+        renamed = source.with_suffix(_upload_extension(info, filename))
+        source.rename(renamed)
+        source = renamed
+        thumbnail_path = None
+        if thumbnail is not None:
+            uploaded_image = media_dir / ".thumbnail.upload"
+            _copy_upload(thumbnail, uploaded_image, config.MAX_THUMBNAIL_BYTES)
+            thumbnail_path = media_dir / f"custom-{uuid.uuid4().hex}.jpg"
+            media.normalize_thumbnail(uploaded_image, thumbnail_path)
+            uploaded_image.unlink()
+        days = settings.get("retention_days", 7)
+        retention_days = days if settings.get("auto_delete_enabled", days > 0) and days > 0 else None
+        duration_value = info.get("format", {}).get("duration")
+        try:
+            duration = float(duration_value)
+            if not math.isfinite(duration) or duration < 0:
+                duration = None
+        except (TypeError, ValueError):
+            duration = None
+        default_title = Path(filename.replace("\\", "/")).stem or "Uploaded media"
+        cancel = threading.Event()
+        thread = threading.Thread(target=_run_upload,
+                                  args=(video_id, source, media_dir, media_kind,
+                                        thumbnail_path, settings, cancel), daemon=True)
+        with _LOCK:
+            # Make the row and its cancellation handle visible together, so an
+            # immediate Delete from another client cannot miss the new worker.
+            db.create_video(video_id, f"upload:{video_id}", "upload", "original", media_dir, retention_days)
+            db.update_video(video_id, title=(title or "").strip()[:500] or default_title[:500],
+                            file_path=str(source), file_size=source.stat().st_size,
+                            thumbnail_path=str(thumbnail_path) if thumbnail_path else None,
+                            media_kind=media_kind, duration=duration,
+                            width=video_stream.get("width") if video_stream else None,
+                            height=video_stream.get("height") if video_stream else None)
+            row = db.get_video(video_id)
+            _ACTIVE[video_id] = {"cancel": cancel, "thread": thread}
+            thread.start()
+        return row
+    except BaseException:
+        shutil.rmtree(media_dir, ignore_errors=True)
+        db.delete_video(video_id)
+        with _LOCK:
+            _ACTIVE.pop(video_id, None)
+        raise
+
+
+def _run_upload(video_id: str, source: Path, media_dir: Path, media_kind: str,
+                thumbnail: Path | None, settings: dict, cancel: threading.Event) -> None:
+    acquired = False
+    staged = media_dir / "derived" / ".mp3.partial.mp3"
+    try:
+        while not cancel.is_set():
+            acquired = _SLOTS.acquire(timeout=0.2)
+            if acquired:
+                break
+        if cancel.is_set():
+            return
+        db.update_video(video_id, status="processing", progress=70, stage="checking")
+        playback_warning = None
+        if media_kind == "audio":
+            db.upsert_media_conversion(video_id, "mp3", "converting")
+            db.update_video(video_id, stage="converting")
+            target = staged.parent / "mp3.mp3"
+            if source.suffix == ".mp3":
+                # Preserve uploaded MP3 bytes; normalization is only needed for other codecs.
+                target = source
+            else:
+                if not media.convert_to_mp3(source, staged, cancel):
+                    raise ValueError("The uploaded audio could not be prepared for MP3 playback.")
+                if cancel.is_set():
+                    raise InterruptedError("Upload cancelled")
+                staged.replace(target)
+            db.update_media_conversion(video_id, "mp3", status="completed", output_path=str(target),
+                                       completed_at=datetime.now(timezone.utc).isoformat())
+        elif not media.is_browser_compatible(source):
+            playback_warning = ("This uploaded format may not play in your browser. "
+                                "Convert it to MP4 for playback or download the original file.")
+        if thumbnail is None and settings.get("generate_thumbnails", True):
+            candidate = media_dir / "thumbnail.jpg"
+            if media.make_thumbnail(source, candidate):
+                thumbnail = candidate
+        with _MEDIA_EDIT_LOCK:
+            if cancel.is_set() or not db.get_video(video_id):
+                raise InterruptedError("Upload cancelled")
+            db.complete_video(video_id, completed_at=datetime.now(timezone.utc).isoformat(),
+                              progress=100, stage=None, playback_warning=playback_warning,
+                              thumbnail_path=str(thumbnail) if thumbnail else None,
+                              playback_format="mp3" if media_kind == "audio" else "original")
+        video_keywords.schedule(video_id)
+    except InterruptedError:
+        pass
+    except Exception as exc:
+        if not cancel.is_set():
+            db.update_video(video_id, status="failed", stage=None, error_message=str(exc)[:2000],
+                            completed_at=datetime.now(timezone.utc).isoformat())
+            if media_kind == "audio":
+                db.update_media_conversion(video_id, "mp3", status="failed", error_message=str(exc)[:2000])
+    finally:
+        staged.unlink(missing_ok=True)
+        if acquired:
+            _SLOTS.release()
+        if cancel.is_set():
+            shutil.rmtree(media_dir, ignore_errors=True)
+        with _LOCK:
+            _ACTIVE.pop(video_id, None)
+
+
+def update_thumbnail(video_id: str, thumbnail) -> dict:
+    row = db.get_video(video_id)
+    if not row:
+        raise LookupError("Video not found")
+    if row["status"] != "ready":
+        raise RuntimeError("Wait for media preparation to finish before changing its thumbnail")
+    with tempfile.TemporaryDirectory(prefix="thumbnail-", dir=temp_manager.library_root()) as folder:
+        staged = Path(folder) / "image.upload"
+        normalized = Path(folder) / "image.jpg"
+        _copy_upload(thumbnail, staged, config.MAX_THUMBNAIL_BYTES)
+        media.normalize_thumbnail(staged, normalized)
+        with _MEDIA_EDIT_LOCK:
+            row = db.get_video(video_id)
+            if not row:
+                raise LookupError("Video not found")
+            media_dir = Path(row["media_dir"])
+            old = Path(row["thumbnail_path"]) if row.get("thumbnail_path") else None
+            target = media_dir / f"custom-{uuid.uuid4().hex}.jpg"
+            normalized.replace(target)
+            try:
+                db.update_video(video_id, thumbnail_path=str(target))
+            except Exception:
+                target.unlink(missing_ok=True)
+                raise
+            if old and old.resolve().is_relative_to(media_dir.resolve()):
+                try:
+                    old.unlink(missing_ok=True)
+                except OSError:
+                    # A Windows response may still hold the previous image open.
+                    # It remains inside this media directory for normal deletion.
+                    _LOG.warning("Previous artwork for %s is still in use.", video_id)
+            return db.get_video(video_id)
+
+
 def cancel_and_delete(video_id: str) -> None:
     with _LOCK:
+        _DELETING.add(video_id)
         entry = _ACTIVE.get(video_id)
         conversions = [value for (item_id, _), value in _CONVERSIONS.items()
                        if item_id == video_id]
@@ -110,15 +307,20 @@ def cancel_and_delete(video_id: str) -> None:
         conversion["cancel"].set()
     for conversion in conversions:
         conversion["thread"].join(timeout=2)
-    row = db.get_video(video_id)
-    if row and row.get("media_dir"):
-        media_dir = Path(row["media_dir"])
-        for _ in range(10):
-            shutil.rmtree(media_dir, ignore_errors=True)
-            if not media_dir.exists():
-                break
-            threading.Event().wait(0.2)
-    db.delete_video(video_id)
+    try:
+        with _MEDIA_EDIT_LOCK:
+            row = db.get_video(video_id)
+            if row and row.get("media_dir"):
+                media_dir = Path(row["media_dir"])
+                for _ in range(10):
+                    shutil.rmtree(media_dir, ignore_errors=True)
+                    if not media_dir.exists():
+                        break
+                    threading.Event().wait(0.2)
+            db.delete_video(video_id)
+    finally:
+        with _LOCK:
+            _DELETING.discard(video_id)
 
 
 def purge_expired() -> list[str]:
@@ -145,6 +347,12 @@ def video_payload(row: dict) -> dict:
     payload["stream_url"] = f"/api/media/{video_id}/stream"
     payload["thumbnail_url"] = (f"/api/media/{video_id}/thumbnail"
                                 if row.get("thumbnail_path") else None)
+    if row.get("thumbnail_path") and Path(row["thumbnail_path"]).name.startswith("custom-"):
+        payload["thumbnail_url"] += f"?v={Path(row['thumbnail_path']).stem}"
+    payload.setdefault("media_kind", "video")
+    payload.setdefault("playback_format", "original")
+    payload["playback_preference_explicit"] = bool(
+        row.get("playback_preference_explicit", False))
     payload["download_url"] = f"/api/media/{video_id}/download"
     payload["keywords"] = db.get_video_keywords(video_id)
     file_path = row.get("file_path")
@@ -174,9 +382,24 @@ def conversion_payload(video_id: str, output_format: str) -> dict:
     if status == "completed":
         base = f"/api/media/{video_id}/conversions/{output_format}"
         payload["download_url"] = f"{base}/download"
-        if output_format == "mp4":
-            payload["stream_url"] = f"{base}/stream"
+        payload["stream_url"] = f"{base}/stream"
     return payload
+
+
+def update_playback(video_id: str, output_format: str) -> dict:
+    if output_format not in ("original", "mp3"):
+        raise ValueError("Playback format must be original or mp3")
+    with _MEDIA_EDIT_LOCK:
+        row = db.get_video(video_id)
+        if not row:
+            raise LookupError("Video not found")
+        if row["status"] != "ready":
+            raise RuntimeError("Media is not ready for playback")
+        if output_format == "mp3" and conversion_payload(video_id, "mp3")["status"] != "completed":
+            raise RuntimeError("Convert this media to MP3 before selecting MP3 playback")
+        db.update_video(video_id, playback_format=output_format,
+                        playback_preference_explicit=True)
+        return db.get_video(video_id)
 
 
 def start_conversion(video_id: str, output_format: str) -> dict:
@@ -188,15 +411,23 @@ def start_conversion(video_id: str, output_format: str) -> dict:
         raise LookupError("Video not found")
     if row["status"] != "ready" or not source or not source.is_file():
         raise RuntimeError("Video is not ready for conversion")
+    if row.get("media_kind") == "audio" and output_format == "mp4":
+        thumbnail = Path(row["thumbnail_path"]) if row.get("thumbnail_path") else None
+        if not thumbnail or not thumbnail.is_file():
+            raise ValueError("Add a custom thumbnail before creating an MP4 from audio")
 
     existing = db.get_media_conversion(video_id, output_format)
     if existing and existing["status"] == "completed":
         output = Path(existing["output_path"]) if existing.get("output_path") else None
         if output and output.is_file():
+            if output_format == "mp3":
+                update_playback(video_id, "mp3")
             return conversion_payload(video_id, output_format)
 
     key = (video_id, output_format)
     with _LOCK:
+        if video_id in _DELETING or not db.get_video(video_id):
+            raise LookupError("Video not found")
         if key in _CONVERSIONS:
             return conversion_payload(video_id, output_format)
         db.upsert_media_conversion(video_id, output_format, "queued")
@@ -229,19 +460,32 @@ def _run_conversion(video_id: str, output_format: str, source: Path,
     derived_dir = media_dir / "derived"
     target = derived_dir / f"{output_format}.{output_format}"
     staged = derived_dir / f".{output_format}.partial.{output_format}"
+    acquired = False
     try:
+        while not cancel.is_set():
+            acquired = _SLOTS.acquire(timeout=0.2)
+            if acquired:
+                break
+        if cancel.is_set():
+            return
         db.update_media_conversion(video_id, output_format, status="converting")
         staged.unlink(missing_ok=True)
-        converter = (media.convert_to_mp4 if output_format == "mp4"
-                     else media.convert_to_mp3)
-        if not converter(source, staged, cancel):
-            raise RuntimeError(f"The video could not be converted to {output_format.upper()}.")
-        if cancel.is_set():
-            raise InterruptedError("Conversion cancelled")
-        staged.replace(target)
-        db.update_media_conversion(
-            video_id, output_format, status="completed", output_path=str(target),
-            error_message=None, completed_at=datetime.now(timezone.utc).isoformat())
+        row = db.get_video(video_id)
+        if output_format == "mp4" and row and row.get("media_kind") == "audio":
+            thumbnail = Path(row["thumbnail_path"]) if row.get("thumbnail_path") else None
+            converted = bool(thumbnail and thumbnail.is_file()
+                             and media.convert_audio_to_mp4(source, thumbnail, staged, cancel))
+        else:
+            converter = (media.convert_to_mp4 if output_format == "mp4"
+                         else media.convert_to_mp3)
+            converted = converter(source, staged, cancel)
+        if not converted:
+            raise RuntimeError(f"The media could not be converted to {output_format.upper()}.")
+        with _MEDIA_EDIT_LOCK:
+            if cancel.is_set() or not db.get_video(video_id):
+                raise InterruptedError("Conversion cancelled")
+            staged.replace(target)
+            db.complete_media_conversion(video_id, output_format, str(target))
     except InterruptedError:
         staged.unlink(missing_ok=True)
     except Exception as exc:
@@ -252,6 +496,10 @@ def _run_conversion(video_id: str, output_format: str, source: Path,
                 error_message=str(exc)[:2000],
                 completed_at=datetime.now(timezone.utc).isoformat())
     finally:
+        if acquired:
+            _SLOTS.release()
+        if cancel.is_set() and not db.get_video(video_id):
+            shutil.rmtree(media_dir, ignore_errors=True)
         with _LOCK:
             _CONVERSIONS.pop(key, None)
 

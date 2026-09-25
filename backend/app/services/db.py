@@ -52,6 +52,9 @@ CREATE TABLE IF NOT EXISTS videos (
     file_size INTEGER,
     thumbnail_path TEXT,
     playback_warning TEXT,
+    media_kind TEXT NOT NULL DEFAULT 'video',
+    playback_format TEXT NOT NULL DEFAULT 'original',
+    playback_preference_explicit INTEGER NOT NULL DEFAULT 0,
     error_message TEXT,
     created_at TEXT NOT NULL,
     completed_at TEXT,
@@ -236,6 +239,12 @@ def init_db() -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(videos)")}
         if "playback_warning" not in columns:
             conn.execute("ALTER TABLE videos ADD COLUMN playback_warning TEXT")
+        if "media_kind" not in columns:
+            conn.execute("ALTER TABLE videos ADD COLUMN media_kind TEXT NOT NULL DEFAULT 'video'")
+        if "playback_format" not in columns:
+            conn.execute("ALTER TABLE videos ADD COLUMN playback_format TEXT NOT NULL DEFAULT 'original'")
+        if "playback_preference_explicit" not in columns:
+            conn.execute("ALTER TABLE videos ADD COLUMN playback_preference_explicit INTEGER NOT NULL DEFAULT 0")
         if "retention_days" not in columns:
             conn.execute("ALTER TABLE videos ADD COLUMN retention_days INTEGER")
         if "retention_override" not in columns:
@@ -802,6 +811,20 @@ def get_media_conversion(video_id: str, output_format: str) -> dict | None:
             (video_id, output_format),
         ).fetchone()
     return dict(row) if row else None
+
+
+def complete_media_conversion(video_id: str, output_format: str, output_path: str) -> None:
+    """Publish the playable derivative and its selected mode atomically."""
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "UPDATE media_conversions SET status='completed', output_path=?,"
+            " error_message=NULL, completed_at=? WHERE video_id=? AND format=?",
+            (output_path, _now(), video_id, output_format),
+        )
+        if output_format == "mp3":
+            conn.execute(
+                "UPDATE videos SET playback_format='mp3', playback_preference_explicit=1"
+                " WHERE id=?", (video_id,))
 
 
 def list_media_conversions(video_id: str) -> list[dict]:

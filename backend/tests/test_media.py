@@ -126,6 +126,28 @@ class CodecPreparationTest(unittest.TestCase):
                 capture_output=True, text=True, check=True)
             self.assertEqual(result.stdout.strip(), "mp3")
 
+    def test_audio_and_still_image_are_rendered_as_mp4(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "source.wav"
+            artwork = Path(folder) / "artwork.jpg"
+            target = Path(folder) / "rendered.mp4"
+            subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-f", "lavfi", "-i", "sine=frequency=440:duration=0.3",
+                 str(source)], check=True)
+            subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-f", "lavfi", "-i", "color=c=red:s=32x24", "-frames:v", "1",
+                 "-update", "1",
+                 str(artwork)], check=True)
+            self.assertTrue(media.convert_audio_to_mp4(source, artwork, target))
+            streams = media.probe_streams(target)
+            self.assertEqual(
+                {stream["codec_type"]: stream["codec_name"] for stream in streams},
+                {"video": "h264", "audio": "aac"})
+            video = next(stream for stream in streams if stream["codec_type"] == "video")
+            self.assertEqual((video["width"], video["height"]), (32, 24))
+
 
 if __name__ == "__main__":
     unittest.main()
