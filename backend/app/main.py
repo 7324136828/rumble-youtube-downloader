@@ -3,11 +3,12 @@ import json
 import logging
 import mimetypes
 import re
+import subprocess
 import uuid
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse,
                                Response, StreamingResponse)
@@ -18,7 +19,8 @@ from .routers.recommendations import router as recommendations_router
 from .routers.settings import router as settings_router
 from .routers.connector import router as connector_router
 from .schemas.job import ConvertRequest
-from .schemas.media import DownloadRequest, ResolveRequest, VideoRetentionPatch
+from .schemas.media import (DownloadRequest, MediaPlaybackPatch, ResolveRequest,
+                            VideoRetentionPatch)
 from .schemas.search import SearchResponse, SearchSource
 from .schemas.watch_history import WatchEvent
 from .services import (db, library, manual_video_search, media, pipeline, search,
@@ -363,6 +365,55 @@ def list_media(status: str | None = None):
     return [library.video_payload(row) for row in db.list_videos(status)]
 
 
+@app.post("/api/media/upload")
+def upload_media(file: UploadFile = File(...), thumbnail: UploadFile | None = File(None),
+                 title: str | None = Form(None, max_length=500)):
+    try:
+        row = library.start_upload(file.file, file.filename or "Uploaded media", title,
+                                   thumbnail.file if thumbnail else None)
+        return library.video_payload(row)
+    except library.UploadTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=400, detail="Media validation timed out; try a different file.") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail="FFmpeg and ffprobe must be installed to import media.") from exc
+
+
+@app.post("/api/media/{video_id}/thumbnail")
+def upload_media_thumbnail(video_id: str, thumbnail: UploadFile = File(...)):
+    library.purge_expired()
+    try:
+        return library.video_payload(library.update_thumbnail(video_id, thumbnail.file))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except library.UploadTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=400, detail="Thumbnail validation timed out; try a different image.") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail="FFmpeg and ffprobe must be installed to import thumbnails.") from exc
+
+
+@app.patch("/api/media/{video_id}/playback")
+def update_media_playback(video_id: str, request: MediaPlaybackPatch):
+    library.purge_expired()
+    try:
+        return library.video_payload(library.update_playback(video_id, request.format))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.get("/api/video-keywords")
 def list_video_keywords(q: str = Query("", max_length=100),
                         session: str | None = Query(None, min_length=1, max_length=64)):
@@ -437,9 +488,9 @@ def download_media_conversion(video_id: str, output_format: str):
                         media_type=media_type)
 
 
-@app.get("/api/media/{video_id}/conversions/mp4/stream")
-def stream_media_conversion(video_id: str, request: Request):
-    _, path = _conversion_file(video_id, "mp4")
+@app.get("/api/media/{video_id}/conversions/{output_format}/stream")
+def stream_media_conversion(video_id: str, output_format: str, request: Request):
+    _, path = _conversion_file(video_id, output_format.lower())
     return _stream_response(path, request)
 
 

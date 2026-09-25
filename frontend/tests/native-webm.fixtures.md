@@ -14,3 +14,10 @@ ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=96x64:rate=12:dur
 Run `npm run test:webm` from `frontend`. This uses the installed Chromium
 browser, an isolated temporary profile, a local Vite server, and real-time
 native media decoding. It never mocks `HTMLMediaElement` or downloads media.
+
+The same suite includes `native-audio.mp3`, a two-second synthetic tone used to
+verify audio playback and seeking with persistent thumbnail artwork:
+
+```powershell
+ffmpeg -hide_banner -loglevel error -nostdin -y -f lavfi -i sine=frequency=440:duration=2 -c:a libmp3lame -q:a 5 frontend/tests/native-audio.mp3
+```

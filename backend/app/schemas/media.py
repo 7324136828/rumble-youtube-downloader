@@ -15,6 +15,11 @@ class DownloadRequest(BaseModel):
     quality: Quality = "best"
 
 
+class MediaPlaybackPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    format: Literal["original", "mp3"]
+
+
 class VideoRetentionPatch(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     retention_days: int = Field(..., le=3650, strict=True)

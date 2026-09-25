@@ -111,6 +111,26 @@ export function startMediaConversion(id, format) {
   return request(`/media/${id}/conversions/${format}`, { method: 'POST' });
 }
 
+export function updateMediaPlayback(id, format) {
+  return request(`/media/${encodeURIComponent(id)}/playback`, {
+    method: 'PATCH', body: JSON.stringify({ format }),
+  });
+}
+
+export function uploadMedia(file, thumbnail, title = '') {
+  const body = new FormData();
+  body.append('file', file);
+  if (thumbnail) body.append('thumbnail', thumbnail);
+  if (title.trim()) body.append('title', title.trim());
+  return request('/media/upload', { method: 'POST', headers: {}, body });
+}
+
+export function uploadMediaThumbnail(id, thumbnail) {
+  const body = new FormData();
+  body.append('thumbnail', thumbnail);
+  return request(`/media/${encodeURIComponent(id)}/thumbnail`, { method: 'POST', headers: {}, body });
+}
+
 export function getDownloadSettings(signal) {
   return request('/settings/downloads', { signal });
 }

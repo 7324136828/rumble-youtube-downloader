@@ -11,6 +11,62 @@ from . import db
 VIDEO_EXTS = {".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi"}
 PLAYABLE_EXTS = {".mp4", ".m4v", ".webm", ".mov"}
 
+# Local uploads are media files, never manifests that can open other files or
+# network URLs. Restrict demuxers as well as protocols before probing/decoding.
+_LOCAL_FORMATS = ("mov,matroska,webm,avi,mp3,wav,aiff,flac,ogg,aac,ac3,eac3,"
+                  "asf,mpeg,mpegts,flv,rm,amr,ape,wv,tta,mpc,mpc8,au,voc,caf,nut,"
+                  "h264,hevc,m4v,obu,ivf,loas,dts,dtshd,shorten,tak,dsf,iff,swf")
+_IMAGE_FORMATS = "jpeg_pipe,png_pipe,webp_pipe,bmp_pipe,tiff_pipe,gif"
+
+
+def _local_input(path: Path, formats: str = _LOCAL_FORMATS) -> list[str]:
+    return ["-protocol_whitelist", "file,pipe", "-format_whitelist", formats,
+            "-i", str(path)]
+
+
+def probe_upload(path: Path, *, thumbnail: bool = False) -> dict:
+    """Validate uploaded content without trusting its filename or MIME type."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-max_alloc", "134217728",
+         *_local_input(path, _IMAGE_FORMATS if thumbnail else _LOCAL_FORMATS),
+         "-show_streams", "-show_format", "-of", "json"],
+        capture_output=True, text=True, timeout=30,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if result.returncode:
+        raise ValueError("The file could not be read as a supported "
+                         + ("image." if thumbnail else "audio or video file."))
+    data = json.loads(result.stdout)
+    streams = data.get("streams", [])
+    if not any(s.get("codec_type") in ("audio", "video") for s in streams):
+        raise ValueError("The uploaded file does not contain audio or video.")
+    if thumbnail:
+        image = next((s for s in streams if s.get("codec_type") == "video"), {})
+        width, height = image.get("width", 0), image.get("height", 0)
+        if not width or not height or max(width, height) > 12000 or width * height > 40000000:
+            raise ValueError("Thumbnail must be an image of at most 40 megapixels and 12000 pixels per side.")
+    return data
+
+
+def normalize_thumbnail(source: Path, target: Path) -> None:
+    """Decode one bounded-size bitmap and write sanitized JPEG artwork."""
+    probe_upload(source, thumbnail=True)
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+             "-max_alloc", "134217728", *_local_input(source, _IMAGE_FORMATS),
+             "-map", "0:v:0", "-frames:v", "1", "-an", "-map_metadata", "-1",
+             "-vf", "scale=w='min(1280,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease",
+             "-pix_fmt", "yuvj420p", "-update", "1", str(target)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode or not target.is_file() or not target.stat().st_size:
+            raise ValueError("The thumbnail could not be decoded as an image.")
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+
 _PREPARING = set()
 _LOCK = threading.Lock()
 _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
@@ -129,8 +185,8 @@ def convert_to_mp4(video: Path, target: Path, cancel=None) -> bool:
     """Remux compatible tracks, otherwise produce H.264/AAC for the players."""
     target.parent.mkdir(parents=True, exist_ok=True)
     streams = probe_streams(video)
-    base = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-i", str(video), "-map", "0:v:0", "-map", "0:a:0?"]
+    base = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+            *_local_input(video), "-map", "0:v:0", "-map", "0:a:0?"]
     if _mp4_codecs_supported(streams):
         if _run_conversion(base + ["-c", "copy", "-movflags", "+faststart",
                                    str(target)], cancel):
@@ -145,12 +201,28 @@ def convert_to_mp4(video: Path, target: Path, cancel=None) -> bool:
     return ok
 
 
+def convert_audio_to_mp4(audio: Path, thumbnail: Path, target: Path, cancel=None) -> bool:
+    """Render an audio track as H.264/AAC MP4 using one still image."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    ok = _run_conversion(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+         "-stream_loop", "-1", *_local_input(thumbnail, _IMAGE_FORMATS),
+         *_local_input(audio), "-map", "0:v:0", "-map", "1:a:0",
+         "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage",
+         "-vf", "scale='min(1280,iw)':-2,format=yuv420p",
+         "-c:a", "aac", "-b:a", "192k", "-shortest",
+         "-movflags", "+faststart", str(target)], cancel)
+    if not ok:
+        target.unlink(missing_ok=True)
+    return ok
+
+
 def convert_to_mp3(video: Path, target: Path, cancel=None) -> bool:
     """Extract the first audio track into a broadly compatible MP3 file."""
     target.parent.mkdir(parents=True, exist_ok=True)
     ok = _run_conversion(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-         "-i", str(video), "-map", "0:a:0", "-vn", "-c:a", "libmp3lame",
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+         *_local_input(video), "-map", "0:a:0", "-vn", "-c:a", "libmp3lame",
          "-q:a", "2", str(target)], cancel)
     if not ok:
         target.unlink(missing_ok=True)
@@ -165,8 +237,8 @@ def make_thumbnail(video: Path, target: Path) -> bool:
     for seek in ("1", "0"):
         try:
             ok = subprocess.run(
-                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                 "-ss", seek, "-i", str(video), "-frames:v", "1",
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                 "-ss", seek, *_local_input(video), "-frames:v", "1",
                  "-vf", "scale=480:-2", "-pix_fmt", "yuvj420p", str(target)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 timeout=20,

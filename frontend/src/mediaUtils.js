@@ -13,7 +13,7 @@ export function formatSize(bytes) {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
-const CONNECTOR_LABELS = { youtube: 'YouTube', rumble: 'Rumble', generic: 'Other' };
+const CONNECTOR_LABELS = { youtube: 'YouTube', rumble: 'Rumble', generic: 'Other', upload: 'Upload' };
 export function connectorLabel(id) { return CONNECTOR_LABELS[id] || id || 'Other'; }
 export function connectorBadgeClass(id) { return `connector-badge badge-${Object.hasOwn(CONNECTOR_LABELS, id) ? id : 'generic'}`; }
 export function loadLikes() {
@@ -33,5 +33,19 @@ export function getPlayerMode() {
 }
 export function setPlayerMode(mode) {
   try { localStorage.setItem('clipfeed.playerMode', mode); } catch { /* Optional persistence. */ }
+}
+
+export function mediaPlayback(video) {
+  const mp3 = video?.conversions?.mp3;
+  const mp4 = video?.conversions?.mp4;
+  const mp3Ready = mp3?.status === 'completed' && Boolean(mp3.stream_url);
+  const mp4Ready = mp4?.status === 'completed' && Boolean(mp4.stream_url);
+  const explicit = Boolean(video?.playback_preference_explicit);
+  const useMp3 = mp3Ready && (video?.playback_format === 'mp3' || (!explicit && !mp4Ready));
+  const useMp4 = mp4Ready && !(explicit && video?.playback_format === 'mp3');
+  return {
+    src: useMp3 ? mp3.stream_url : useMp4 ? mp4.stream_url : video?.stream_url,
+    audioOnly: useMp3 || (video?.media_kind === 'audio' && !useMp4),
+  };
 }
 

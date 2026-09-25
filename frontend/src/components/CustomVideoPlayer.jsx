@@ -1,4 +1,5 @@
 ﻿import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { PLAYBACK_SPEEDS, updatePlaybackPreferences, usePlaybackPreferences } from '../playbackPreferences';
 import './CustomVideoPlayer.css';
 
 function PlayerIcon({ name, size = 20 }) {
@@ -27,7 +28,7 @@ function timeLabel(value) {
 
 /** Custom controls around an HTML video. The forwarded ref is the video element. */
 const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
-  src, poster, title = 'Video', autoPlay = false, active = true,
+  src, poster, title = 'Video', autoPlay = false, active = true, audioOnly = false,
   muted: controlledMuted, onMutedChange, loop = false, variant = 'watch',
   onEnded, onNext, onPrevious, onTimeUpdate, onLoadedMetadata, formatErrorActions, children,
 }, forwardedRef) {
@@ -38,15 +39,14 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
   const mounted = useRef(false);
   const activeRef = useRef(active);
   const muteCallback = useRef(onMutedChange);
-  const controlledMuteRef = useRef(controlledMuted);
-  const [internalMuted, setInternalMuted] = useState(false);
+  const preferences = usePlaybackPreferences();
   const [playing, setPlaying] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
   const [volume, setVolume] = useState(1);
-  const [speed, setSpeed] = useState(1);
+  const speed = preferences.speed;
   const [visible, setVisible] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [error, setError] = useState('');
@@ -54,20 +54,19 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
   const [pipAvailable, setPipAvailable] = useState(false);
   const [pipActive, setPipActive] = useState(false);
   const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
-  const isMuted = controlledMuted ?? internalMuted;
+  const isMuted = controlledMuted ?? preferences.muted;
 
   activeRef.current = active;
   muteCallback.current = onMutedChange;
-  controlledMuteRef.current = controlledMuted;
   useImperativeHandle(forwardedRef, () => videoRef.current, []);
 
   const changeMuted = useCallback((value) => {
     if (videoRef.current) videoRef.current.muted = value;
-    if (controlledMuteRef.current === undefined) setInternalMuted(value);
+    updatePlaybackPreferences({ muted: value });
     muteCallback.current?.(value);
   }, []);
 
-  const requestPlay = useCallback(async (allowMutedFallback = false) => {
+  const requestPlay = useCallback(async () => {
     const video = videoRef.current;
     if (!video || !activeRef.current) return;
     const id = ++requestId.current;
@@ -78,24 +77,14 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
       if (!mounted.current || !activeRef.current) video.pause();
     } catch (playError) {
       if (!valid() || playError?.name === 'AbortError') return;
-      if (allowMutedFallback && playError?.name === 'NotAllowedError' && !video.muted) {
-        changeMuted(true);
-        try {
-          await video.play();
-      if (!mounted.current || !activeRef.current) video.pause();
-          return;
-        } catch (retryError) {
-          if (!valid() || retryError?.name === 'AbortError') return;
-        }
-      }
       if (valid()) {
         setPlaying(false);
         setBuffering(false);
         setVisible(true);
-        setNotice(playError?.name === 'NotAllowedError' ? 'Press play to start' : 'Playback could not start. Try again.');
+        setNotice(playError?.name === 'NotAllowedError' ? (video.muted ? 'Press play to start' : 'Press play to start with sound') : 'Playback could not start. Try again.');
       }
     }
-  }, [changeMuted]);
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -156,13 +145,20 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
   }, [isMuted]);
 
   useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.defaultPlaybackRate = speed;
+      videoRef.current.playbackRate = speed;
+    }
+  }, [speed, src]);
+
+  useEffect(() => {
     const video = videoRef.current;
     if (!active) {
       requestId.current += 1;
       video?.pause();
       setBuffering(false);
     } else if (autoPlay && src) {
-      requestPlay(true);
+      requestPlay();
     }
     return () => { requestId.current += 1; video?.pause(); };
   }, [active, autoPlay, src, requestPlay]);
@@ -279,7 +275,7 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
   );
 
   return (
-    <div ref={rootRef} className={`cvp cvp--${variant}${showControls ? ' cvp--controls-visible' : ''}${!active ? ' cvp--inactive' : ''}`} role="region" aria-label={`${title} video player`} tabIndex={active ? 0 : -1} onKeyDown={handleKeyboard} onPointerMove={revealControls} onFocus={revealControls}>
+    <div ref={rootRef} className={`cvp cvp--${variant}${audioOnly ? ' cvp--audio' : ''}${showControls ? ' cvp--controls-visible' : ''}${!active ? ' cvp--inactive' : ''}`} role="region" aria-label={`${title} ${audioOnly ? 'audio' : 'video'} player`} tabIndex={active ? 0 : -1} onKeyDown={handleKeyboard} onPointerMove={revealControls} onFocus={revealControls}>
       <video ref={videoRef} className="cvp-video" src={src || undefined} poster={poster || undefined} muted={isMuted} loop={loop} playsInline preload={active ? 'metadata' : 'none'} tabIndex={-1}
         onPlay={(event) => { if (!activeRef.current) { event.currentTarget.pause(); return; } setPlaying(true); setNotice(''); }}
         onPlaying={(event) => { if (!activeRef.current) { event.currentTarget.pause(); return; } setPlaying(true); setBuffering(false); }}
@@ -292,11 +288,11 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
         onDurationChange={(event) => updateDuration(event.currentTarget)}
         onTimeUpdate={(event) => { const video = event.currentTarget; setCurrentTime(video.currentTime); updateBuffer(video); onTimeUpdate?.(video.currentTime, Number.isFinite(video.duration) ? video.duration : 0); }}
         onProgress={(event) => updateBuffer(event.currentTarget)}
-        onVolumeChange={(event) => { setVolume(event.currentTarget.volume); if (controlledMuteRef.current === undefined) setInternalMuted(event.currentTarget.muted); }}
-        onRateChange={(event) => setSpeed(event.currentTarget.playbackRate)}
+        onVolumeChange={(event) => setVolume(event.currentTarget.volume)}
         onEnded={(event) => { setPlaying(false); setBuffering(false); onEnded?.(event); }}
         onError={handleError}
       />
+      {audioOnly && <div className="cvp-audio-artwork" aria-hidden="true">{poster ? <img src={poster} alt="" /> : <span className="cvp-audio-placeholder">♫</span>}<span className="cvp-audio-label">Audio</span></div>}
       {!error && <button type="button" className="cvp-surface" tabIndex={-1} aria-label={playing ? 'Pause video' : 'Play video'} onClick={() => { rootRef.current?.focus({ preventScroll: true }); togglePlay(); }} disabled={!active}>
         {!playing && !buffering && <span className="cvp-big-play"><PlayerIcon name="play" size={30} /></span>}
       </button>}
@@ -316,10 +312,10 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
           </div>
           <span className="cvp-time"><span>{timeLabel(currentTime)}</span><span className="cvp-time-divider"> / </span><span className="cvp-duration">{timeLabel(duration)}</span></span>
           <span className="cvp-spacer" />
-          <select className="cvp-speed" aria-label="Playback speed" title="Playback speed" value={speed} onChange={(event) => { const rate = Number(event.target.value); if (videoRef.current) videoRef.current.playbackRate = rate; setSpeed(rate); }}>
-            {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => <option key={rate} value={rate}>{rate}x</option>)}
+          <select className="cvp-speed" aria-label="Playback speed" title="Playback speed" value={speed} onChange={(event) => updatePlaybackPreferences({ speed: Number(event.target.value) })}>
+            {PLAYBACK_SPEEDS.map((rate) => <option key={rate} value={rate}>{rate}x</option>)}
           </select>
-          {pipAvailable && controlButton(pipActive ? 'Exit picture-in-picture' : 'Picture-in-picture', 'pip', togglePip, 'cvp-pip')}
+          {pipAvailable && !audioOnly && controlButton(pipActive ? 'Exit picture-in-picture' : 'Picture-in-picture', 'pip', togglePip, 'cvp-pip')}
           {fullscreenAvailable && controlButton(fullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)', fullscreen ? 'collapse' : 'fullscreen', toggleFullscreen)}
         </div>
       </div>

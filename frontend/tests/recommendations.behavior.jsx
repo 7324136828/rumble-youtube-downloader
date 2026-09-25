@@ -237,6 +237,14 @@ await test('YouTube watch history keeps recommendations across enabled websites 
   equal(posts('/api/recommendations').length, count, 'History list filtering does not rerun or narrow recommendations');
   equal(find('.recommendation-item .connector-badge').textContent, 'Vimeo', 'Cross-website recommendation stays visible');
 });
+await test('Removed local uploads return to the upload form instead of downloading a pseudo-URL', async () => {
+  watchHistory = [{ video_id: 'removed-upload', source_url: 'upload:removed-upload', title: 'Local recording', connector: 'upload', media_id: null, last_watched_at: '2026-09-24T12:00:00Z' }];
+  await mount('watch-history');
+  await click(button('Upload again'));
+  equal(location.hash, '#downloads', 'Removed local media returns to Downloads');
+  equal(posts('/api/media').length, 0, 'No download attempted for local source');
+  assert(host.textContent.includes('Upload your own media'), 'Upload form is available');
+});
 await test('A removed watch-history video can be downloaded again without redirecting', async () => {
   await mount('watch-history');
   await click(button('Download again'));

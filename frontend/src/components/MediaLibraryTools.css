@@ -1,0 +1,21 @@
+.media-upload-panel { margin: 22px 0; padding: 22px; border: 1px solid var(--line, #292a31); border-radius: 16px; background: var(--surface, #fff); }
+.media-upload-panel h2 { display: flex; align-items: center; gap: 9px; margin: 0 0 8px; font-size: 18px; }
+.media-upload-panel p { color: var(--muted, #8e909e); font-size: 13px; line-height: 1.5; }
+.media-upload-panel form { display: flex; flex-wrap: wrap; align-items: end; gap: 14px; margin-top: 18px; }
+.media-upload-panel label { display: flex; flex: 1 1 220px; flex-direction: column; gap: 8px; font-size: 13px; font-weight: 600; min-width: 0; }
+.media-upload-panel input { width: 100%; min-width: 0; padding: 9px; border: 1px solid var(--line, #292a31); border-radius: 7px; background: transparent; color: inherit; font: inherit; }
+.media-upload-panel .media-upload-hint, .media-upload-panel .media-upload-files { flex-basis: 100%; margin: 0; overflow-wrap: anywhere; }
+.upload-thumbnail-preview { width: 76px; height: 54px; object-fit: cover; border-radius: 6px; }
+.media-upload-error { color: #ff7189 !important; font-size: 12px; overflow-wrap: anywhere; }
+.media-card-tools { padding: 0 14px 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
+.thumbnail-upload-button { display: inline-flex; padding: 7px 9px; border: 1px solid var(--line, #292a31); border-radius: 7px; font-size: 12px; cursor: pointer; }
+.thumbnail-upload-button:focus-within { outline: 2px solid var(--accent, #ff4866); outline-offset: 2px; }
+.thumbnail-upload-button.is-disabled { opacity: .6; cursor: wait; }
+.media-thumbnail-action { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.media-selection { display: flex; align-items: center; gap: 7px; padding: 10px 14px; font-size: 12px; cursor: pointer; }
+.media-selection input, .media-batch-toolbar input { width: 16px; height: 16px; accent-color: var(--accent, #ff4866); }
+.media-card.is-selected { outline: 2px solid var(--accent, #ff4866); outline-offset: 1px; }
+.media-batch-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 14px 0 20px; padding: 12px 15px; border: 1px solid var(--line, #292a31); border-radius: 10px; font-size: 13px; }
+.media-batch-toolbar label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.media-format-label { font-size: 11px; font-weight: 600; color: var(--muted, #8e909e); }
+@media (max-width: 600px) { .media-upload-panel { padding: 16px; } .media-batch-toolbar .btn-primary { width: 100%; justify-content: center; } }

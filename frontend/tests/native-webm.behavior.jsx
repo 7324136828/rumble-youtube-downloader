@@ -58,6 +58,36 @@ for (const [codec, contentType] of [['vp9', 'video/webm; codecs="vp9,opus"'], ['
   }
 }
 
+{
+  const root = createRoot(host);
+  const ref = React.createRef();
+  const poster = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="96" height="64"%3E%3Crect width="96" height="64" fill="purple"/%3E%3C/svg%3E';
+  const name = 'MP3 decodes, plays, and seeks while custom artwork remains visible';
+  try {
+    flushSync(() => root.render(<CustomVideoPlayer ref={ref} src="./native-audio.mp3" poster={poster} audioOnly title="MP3 audio fixture" muted />));
+    const audio = ref.current;
+    await eventWhen(audio, 'loadeddata', () => audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA);
+    assert(Number.isFinite(audio.duration) && audio.duration >= 2 && audio.duration < 2.2, 'MP3 duration loads');
+    await audio.play();
+    assert(!audio.paused && !audio.videoWidth, 'Audio-only stream plays');
+    const artwork = host.querySelector('.cvp-audio-artwork img');
+    assert(artwork?.getAttribute('src') === poster && artwork.getBoundingClientRect().width > 0, 'Artwork remains rendered after native playback begins');
+    audio.pause();
+    const seeked = eventWhen(audio, 'seeked');
+    audio.currentTime = 1;
+    await seeked;
+    assert(Math.abs(audio.currentTime - 1) < 0.1, 'MP3 can seek');
+    assert(!audio.error && !host.querySelector('[role="alert"]'), 'MP3 plays without a format error');
+    results.push(`PASS ${name}`);
+  } catch (error) {
+    results.push(`FAIL ${name}: ${error.message}`);
+  } finally {
+    flushSync(() => root.unmount());
+    host.replaceChildren();
+    report.textContent = results.join('\n');
+  }
+}
+
 const passed = results.filter((result) => result.startsWith('PASS')).length;
 document.body.dataset.testStatus = passed === results.length ? 'passed' : 'failed';
 document.body.dataset.testCount = String(results.length);

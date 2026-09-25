@@ -1,0 +1,11 @@
+.playback-settings { margin: 24px 0; padding: 24px; border: 1px solid #342c3a; border-radius: 14px; background: #1b1721; }
+.playback-settings h2 { margin: 0 0 8px; color: #f2eaf7; font-size: 19px; }
+.playback-settings > p, .playback-setting-row p { color: #a69aad; font-size: 12px; line-height: 1.6; }
+.playback-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 0; border-top: 1px solid #342c3a; }
+.playback-setting-row label { color: #e0d6e8; font-size: 13px; font-weight: 600; }
+.playback-setting-row p { max-width: 680px; margin: 6px 0 0; }
+.playback-setting-row input { width: 20px; height: 20px; flex: 0 0 auto; accent-color: #ff4866; cursor: pointer; }
+.playback-setting-row select { padding: 8px 12px; border: 1px solid #514457; border-radius: 8px; background: #28202f; color: #fff; }
+.playback-setting-row input:focus-visible, .playback-setting-row select:focus-visible { outline: 2px solid #ff4866; outline-offset: 3px; }
+.playback-settings > small { color: #a69aad; }
+@media (max-width: 600px) { .playback-settings { padding: 18px; } .playback-setting-row { gap: 16px; } }
