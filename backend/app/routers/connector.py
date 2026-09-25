@@ -45,7 +45,6 @@ def record_impressions(body: RecommendationImpressions):
             body.context, event_id=body.event_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    connector_bridge.wake()
     return {"recorded": bool(recorded)}
 
 

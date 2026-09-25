@@ -84,7 +84,6 @@ def record_watch_history(event: WatchEvent):
     if row is not None:
         try:
             connector_activity.record_watch(row, event.watched_seconds, row["position_seconds"], event.completed)
-            connector_bridge.wake()
         except Exception:
             # Optional activity logging must not fail an already-saved playback report.
             logging.getLogger(__name__).warning("Could not queue Connector playback activity.")
@@ -423,7 +422,6 @@ def list_video_keywords(q: str = Query("", max_length=100),
         try:
             connector_activity.record_search(q.strip(), "library_keywords", len(catalog["videos"]),
                                              session_id=session)
-            connector_bridge.wake()
         except Exception:
             logging.getLogger(__name__).warning("Could not queue Connector keyword search activity.")
     return catalog

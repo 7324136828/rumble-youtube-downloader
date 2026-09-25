@@ -1474,6 +1474,14 @@ a svg {
   color: #756b7b;
   font-size: 9px;
 }
+.keyword-cloud-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+.keyword-cloud-more button span {
+  color: #8e909d;
+}
 .keyword-results {
   margin-top: 32px;
 }

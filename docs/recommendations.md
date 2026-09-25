@@ -194,7 +194,7 @@ short links and normal watch URLs remove the same saved item. Existing ready dow
 are reconciled at backend startup. Failed and cancelled downloads remain in Watch later.
 
 **Save every link from a page** accepts one public page URL. The backend follows at
-most five separately checked HTTPS redirects and reads at most 1 MiB of HTML without
+most five separately checked HTTPS redirects and reads at most 100 MiB of HTML without
 cookies, credentials, environment proxies, or scripts. It returns up to 500 unique
 HTTP(S) anchor targets to a read-only preview endpoint before either collection is
 changed. The review window has two views:

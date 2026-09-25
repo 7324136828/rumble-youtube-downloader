@@ -8,7 +8,7 @@ from . import custom_website_search
 from .title_quality import is_placeholder_title
 
 MAX_REDIRECTS = 5
-MAX_PAGE_BYTES = 1024 * 1024
+MAX_PAGE_BYTES = 100 * 1024 * 1024
 MAX_RAW_LINKS = 1000
 MAX_LINKS = 500
 REQUEST_TIMEOUT = 12
@@ -68,7 +68,7 @@ def _request(url):
                     raise PageLinkImportError("The supplied URL did not return an HTML page.")
                 for chunk in response.iter_content():
                     if len(body) + len(chunk) > MAX_PAGE_BYTES:
-                        raise PageLinkImportError("The page is larger than 1 MiB.")
+                        raise PageLinkImportError("The page is larger than 100 MiB.")
                     body.extend(chunk)
             finally:
                 response.close()

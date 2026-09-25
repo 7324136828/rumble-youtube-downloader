@@ -5,6 +5,7 @@ import { connectorLabel, formatDuration } from '../mediaUtils';
 import { getVideoKeywords } from '../services/api';
 
 const EMPTY = { query: '', keywords: [], videos: [], status: {} };
+const KEYWORD_PAGE_SIZE = 30;
 
 export default function KeywordLibraryPage({ navigate }) {
   const { settings } = useRecommendations();
@@ -12,6 +13,7 @@ export default function KeywordLibraryPage({ navigate }) {
   const [query, setQuery] = useState('');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [visibleKeywordCount, setVisibleKeywordCount] = useState(KEYWORD_PAGE_SIZE);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -48,6 +50,8 @@ export default function KeywordLibraryPage({ navigate }) {
     setQuery('');
   };
   const maxCount = Math.max(1, ...(data?.keywords || []).map((item) => item.count));
+  const visibleKeywords = (data?.keywords || []).slice(0, visibleKeywordCount);
+  const hiddenKeywordCount = Math.max(0, (data?.keywords?.length || 0) - visibleKeywordCount);
 
   return <div className="page-wrap keyword-library-page">
     <div className="page-heading"><div><p className="eyebrow">EXPLORE YOUR COLLECTION</p><h1>Video topics<span className="accent">.</span></h1><p className="page-description">Search your saved videos using AI-generated keywords.</p></div><span className="soft-pill"><Icon name="bolt" size={15} />AI organized</span></div>
@@ -62,7 +66,7 @@ export default function KeywordLibraryPage({ navigate }) {
     {(data?.status?.pending || 0) > 0 && <p className="keyword-progress" role="status"><span className="status-dot" />Organizing {data.status.pending} video{data.status.pending === 1 ? '' : 's'}…</p>}
     <section className="keyword-cloud-section" aria-labelledby="keyword-cloud-heading">
       <div className="section-title"><h2 id="keyword-cloud-heading">Word cloud<span className="count-pill">{data?.keywords?.length || 0}</span></h2>{query && <button className="link-btn" onClick={clear}>Show all topics</button>}</div>
-      {data === null ? <div className="collection-empty" role="status"><Icon name="bolt" size={28} /><h3>Opening your topics…</h3></div> : data.keywords.length ? <div className="keyword-cloud">{data.keywords.map((item) => <button type="button" key={item.keyword} aria-pressed={query.toLowerCase() === item.keyword.toLowerCase()} onClick={() => selectKeyword(item.keyword)} style={{ fontSize: `${11 + (item.count / maxCount) * 14}px` }}><span>{item.keyword}</span><small>{item.count}</small></button>)}</div> : <div className="collection-empty"><Icon name="search" size={28} /><h3>No video topics yet</h3><p>{settings.enabled ? 'Keywords appear here after AI finishes organizing videos with a title or description.' : 'Enable Recommendations, then add or download a video to build your word cloud.'}</p></div>}
+      {data === null ? <div className="collection-empty" role="status"><Icon name="bolt" size={28} /><h3>Opening your topics…</h3></div> : data.keywords.length ? <><div className="keyword-cloud" id="keyword-cloud">{visibleKeywords.map((item) => <button type="button" key={item.keyword} aria-pressed={query.toLowerCase() === item.keyword.toLowerCase()} onClick={() => selectKeyword(item.keyword)} style={{ fontSize: `${11 + (item.count / maxCount) * 14}px` }}><span>{item.keyword}</span><small>{item.count}</small></button>)}</div>{hiddenKeywordCount > 0 && <div className="keyword-cloud-more"><button type="button" className="btn-secondary" aria-controls="keyword-cloud" onClick={() => setVisibleKeywordCount((count) => count + KEYWORD_PAGE_SIZE)}>Add more <span>({Math.min(KEYWORD_PAGE_SIZE, hiddenKeywordCount)})</span></button></div>}</> : <div className="collection-empty"><Icon name="search" size={28} /><h3>No video topics yet</h3><p>{settings.enabled ? 'Keywords appear here after AI finishes organizing videos with a title or description.' : 'Enable Recommendations, then add or download a video to build your word cloud.'}</p></div>}
     </section>
     {data && data.keywords.length > 0 && <section className="keyword-results" aria-labelledby="keyword-results-heading">
       <div className="section-title"><h2 id="keyword-results-heading">{query ? `Videos tagged “${query}”` : 'Keyword-tagged videos'}<span className="count-pill">{data.videos.length}</span></h2></div>
