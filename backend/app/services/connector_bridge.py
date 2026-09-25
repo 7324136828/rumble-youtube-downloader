@@ -91,9 +91,16 @@ def _ensure_session(state, *, verify=False):
     key = (str(config.JOBS_DB_PATH.resolve()), url, session_id)
     if session_id and (verify or key != _SESSION_KEY):
         try:
-            detail = connector_client.request("GET", f"/api/sessions/{quote(session_id, safe='')}", timeout=5)
-            session = detail.get("session", {})
-            if session.get("user_session") is not False or session.get("closed_at") or session.get("status") == "closed":
+            # Session detail includes the complete transcript. Activity sessions
+            # grow indefinitely, so fetching that response eventually exceeds the
+            # bounded Connector client response limit and prevents every restart.
+            # The collection endpoint returns compact session summaries instead.
+            sessions = connector_client.request("GET", "/api/sessions", timeout=5,
+                                                expect_list=True)
+            session = next((item for item in sessions if isinstance(item, dict)
+                            and item.get("session_id") == session_id), None)
+            if (session is None or session.get("user_session") is not False
+                    or session.get("closed_at") or session.get("status") == "closed"):
                 session_id = None
         except connector_client.ConnectorError as exc:
             if exc.status_code not in (404, 409):
