@@ -299,8 +299,8 @@ trying the original file. **Play video** and **Play MP3** remain explicit overri
 **Watch** provides a widescreen player, title and creator information, description,
 an Up next list, and optional autoplay-next. **Swipe feed** provides a vertical
 scroll-snap player with touch, wheel, previous/next buttons, and up/down keyboard
-navigation. Only the active feed item plays; landscape videos retain their aspect
-ratio inside the vertical presentation.
+navigation, and automatically advances when a video finishes. Only the active feed
+item plays; landscape videos retain their aspect ratio inside the vertical presentation.
 
 The shared `CustomVideoPlayer` provides:
 

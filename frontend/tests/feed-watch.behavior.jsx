@@ -101,6 +101,15 @@ await test('Feed wheel navigation attaches after asynchronous API loading', asyn
   await dispatch(find('.cf-feed-scroll'), new WheelEvent('wheel', { deltaY: 90, bubbles: true, cancelable: true }));
   assert(!host.querySelectorAll('.cf-feed-item')[1].hasAttribute('inert'), 'Wheel activates next video');
 });
+await test('Feed advances to the next video when the active video ends', async () => {
+  await render(FeedPage);
+  sessionStorage.setItem('clipfeed.position.one', '119');
+  await dispatch(find('.cf-feed-item:not([inert]) video'), new Event('ended'));
+  const cards = host.querySelectorAll('.cf-feed-item');
+  assert(cards[0].hasAttribute('inert') && !cards[1].hasAttribute('inert'), 'Finished video advances to the next feed item');
+  assert(sessionStorage.getItem('clipfeed.position.one') === '0', 'Finished video resets its saved position');
+  assert(!cards[1].querySelector('video').paused, 'Next video starts playing');
+});
 await test('Feed opens the same video in Watch and preserves playback position', async () => {
   await render(FeedPage, { videoId: 'two' });
   const active = find('.cf-feed-item:not([inert])');
