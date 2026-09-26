@@ -368,7 +368,12 @@ def list_media(status: str | None = None):
 def upload_media(file: UploadFile = File(...), thumbnail: UploadFile | None = File(None),
                  title: str | None = Form(None, max_length=500)):
     try:
-        row = library.start_upload(file.file, file.filename or "Uploaded media", title,
+        filename = file.filename or "Uploaded media"
+        if Path(filename.replace("\\", "/")).suffix.lower() == ".osz":
+            rows = library.start_osz_upload(
+                file.file, filename, title, thumbnail.file if thumbnail else None)
+            return [library.video_payload(row) for row in rows]
+        row = library.start_upload(file.file, filename, title,
                                    thumbnail.file if thumbnail else None)
         return library.video_payload(row)
     except library.UploadTooLarge as exc:

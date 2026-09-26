@@ -7,8 +7,10 @@ import tempfile
 import threading
 import time
 import uuid
+import zipfile
+import zlib
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .. import config
 from ..connectors import ConnectorCancelled, ConnectorError, registry
@@ -24,6 +26,7 @@ _SLOTS = threading.Semaphore(config.MAX_CONCURRENT_DOWNLOADS)
 _CONVERSION_FORMATS = {"mp4", "mp3"}
 _LOG = logging.getLogger(__name__)
 RETENTION_INTERVAL_SECONDS = 60 * 60
+MAX_OSZ_MP3_FILES = 100
 _RETENTION_LOCK = threading.Lock()
 _RETENTION_THREAD = None
 _RETENTION_STOP = None
@@ -196,6 +199,110 @@ def start_upload(upload, filename: str, title: str | None = None, thumbnail=None
         db.delete_video(video_id)
         with _LOCK:
             _ACTIVE.pop(video_id, None)
+        raise
+
+
+def _safe_osz_member_name(filename: str) -> str | None:
+    """Return a safe archive-relative MP3 name without trusting ZIP paths."""
+    member = PurePosixPath(filename.replace("\\", "/"))
+    if member.is_absolute() or ".." in member.parts:
+        return None
+    parts = [part for part in member.parts if part not in ("", ".")]
+    if not parts or any(":" in part for part in parts):
+        return None
+    return str(Path(*parts))
+
+
+def start_osz_upload(upload, filename: str, title: str | None = None,
+                     thumbnail=None) -> list[dict]:
+    """Extract every safely named MP3 from an osu! archive and import it."""
+    root = temp_manager.library_root()
+    root.mkdir(parents=True, exist_ok=True)
+    imported: list[dict] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="osz-upload-", dir=root) as folder:
+            staging = Path(folder)
+            archive_path = staging / "archive.osz"
+            _copy_upload(upload, archive_path, config.MAX_UPLOAD_BYTES)
+
+            try:
+                archive = zipfile.ZipFile(archive_path)
+            except (OSError, zipfile.BadZipFile) as exc:
+                raise ValueError("The OSZ file is not a valid archive.") from exc
+
+            with archive:
+                members = []
+                for info in archive.infolist():
+                    if info.is_dir() or not info.filename.lower().endswith(".mp3"):
+                        continue
+                    safe_name = _safe_osz_member_name(info.filename)
+                    if safe_name is not None:
+                        members.append((info, safe_name))
+                if not members:
+                    raise ValueError("The OSZ archive does not contain any safely named MP3 files.")
+                if len(members) > MAX_OSZ_MP3_FILES:
+                    raise ValueError(
+                        f"The OSZ archive contains more than {MAX_OSZ_MP3_FILES} MP3 files."
+                    )
+                if sum(info.file_size for info, _ in members) > config.MAX_UPLOAD_BYTES:
+                    raise UploadTooLarge(
+                        "The MP3 files in the OSZ archive exceed the "
+                        f"{config.MAX_UPLOAD_BYTES // (1024 ** 2)} MB limit."
+                    )
+
+                extracted: list[tuple[Path, str]] = []
+                extracted_size = 0
+                for index, (info, safe_name) in enumerate(members):
+                    if info.flag_bits & 0x1:
+                        raise ValueError("Password-protected MP3 files in OSZ archives are not supported.")
+                    target = staging / f"track-{index}.mp3"
+                    try:
+                        with archive.open(info) as source, target.open("wb") as output:
+                            while chunk := source.read(1024 * 1024):
+                                extracted_size += len(chunk)
+                                if extracted_size > config.MAX_UPLOAD_BYTES:
+                                    raise UploadTooLarge(
+                                        "The MP3 files in the OSZ archive exceed the "
+                                        f"{config.MAX_UPLOAD_BYTES // (1024 ** 2)} MB limit."
+                                    )
+                                output.write(chunk)
+                    except (zipfile.BadZipFile, RuntimeError, NotImplementedError,
+                            EOFError, zlib.error) as exc:
+                        raise ValueError("The OSZ archive could not be read.") from exc
+                    # Validate every member before creating any library rows.
+                    info_payload = media.probe_upload(target)
+                    if not any(stream.get("codec_type") == "audio"
+                               for stream in info_payload.get("streams", [])):
+                        raise ValueError(f"{Path(safe_name).name} does not contain playable audio.")
+                    extracted.append((target, safe_name))
+
+            thumbnail_path = None
+            if thumbnail is not None:
+                thumbnail_upload = staging / "thumbnail.upload"
+                thumbnail_path = staging / "thumbnail.jpg"
+                _copy_upload(thumbnail, thumbnail_upload, config.MAX_THUMBNAIL_BYTES)
+                media.normalize_thumbnail(thumbnail_upload, thumbnail_path)
+
+            archive_title = Path(filename.replace("\\", "/")).stem.strip() or "Uploaded media"
+            requested_title = (title or "").strip()
+            for track_path, member_name in extracted:
+                if len(extracted) == 1:
+                    item_title = requested_title or archive_title
+                else:
+                    track_title = Path(member_name).stem.strip() or "Track"
+                    item_title = f"{requested_title or archive_title} - {track_title}"
+                with track_path.open("rb") as track_stream:
+                    if thumbnail_path is None:
+                        row = start_upload(track_stream, member_name, item_title)
+                    else:
+                        with thumbnail_path.open("rb") as thumbnail_stream:
+                            row = start_upload(
+                                track_stream, member_name, item_title, thumbnail_stream)
+                imported.append(row)
+        return imported
+    except BaseException:
+        for row in imported:
+            cancel_and_delete(row["id"])
         raise
 
 

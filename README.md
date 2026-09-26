@@ -281,6 +281,12 @@ audio is prepared for MP3 playback, and videos that need browser conversion offe
 the existing MP4 conversion action in the player. Unsupported or corrupt files
 report an error. Uploaded items appear alongside downloaded items and follow the
 same expiration settings.
+osu! beatmap archives (`.osz`) are also accepted. Each safely named MP3 in an OSZ
+archive is extracted and added as a separate audio item; other archive contents
+are ignored. A single archive may contain up to 100 MP3 files, and their combined
+uncompressed size must fit within the upload limit. A single-track archive uses
+the OSZ filename as its title unless you provide a custom title. Multi-track
+archives append each MP3 filename to the archive title so the items stay distinct.
 Uploads allow up to 5 GiB per media file by default (`MAX_UPLOAD_BYTES` overrides
 this limit), and up to 10 MiB per custom thumbnail.
 

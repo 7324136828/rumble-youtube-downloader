@@ -17,7 +17,14 @@ window.fetch = async (path, options = {}) => {
   if (url.pathname === '/api/media/upload') {
     const file = options.body.get('file');
     if (failures.has(file.name)) error = 'Upload rejected';
-    else {
+    else if (file.name.endsWith('.osz')) {
+      const archiveName = file.name.slice(0, -4);
+      value = ['first', 'second'].map((track, index) => ({
+        ...makeVideo(`upload-${archiveName}-${index}`), title: `${archiveName} - ${track}`, connector: 'upload', media_kind: 'audio',
+        conversions: { mp3: { format: 'mp3', status: 'completed', stream_url: '/uploaded.mp3', download_url: '/uploaded.mp3' } },
+      }));
+      media = [...value, ...media];
+    } else {
       const audio = file.type.startsWith('audio');
       value = { ...makeVideo(`upload-${media.length}`), title: options.body.get('title') || file.name, connector: 'upload', media_kind: audio ? 'audio' : 'video', thumbnail_url: options.body.get('thumbnail') ? '/uploaded-cover.jpg' : null, conversions: audio ? { mp3: { format: 'mp3', status: 'completed', stream_url: '/uploaded.mp3', download_url: '/uploaded.mp3' } } : {} };
       media = [value, ...media];
@@ -96,7 +103,7 @@ await test('Uploads send actual files and artwork and show both audio and video 
   const video = new File(['video'], 'custom.mkv', { type: 'video/x-matroska' });
   const thumbnail = new File(['art'], 'art.png', { type: 'image/png' });
   await files(find('.media-upload-panel input[multiple]'), [audio, video]);
-  await files(find('.media-upload-panel input[accept]'), [thumbnail]);
+  await files(find('.media-upload-panel input[accept^="image/"]'), [thumbnail]);
   await click(button('Upload media'));
   const uploads = calls.filter((call) => call.path === '/api/media/upload');
   assert(uploads.length === 2 && uploads.every((call) => call.body instanceof FormData && call.body.get('thumbnail').name === 'art.png'), 'Multipart media and shared artwork');
@@ -107,6 +114,28 @@ await test('Uploads send actual files and artwork and show both audio and video 
   assert(renderButton && !renderButton.disabled, 'Audio with artwork offers MP4 rendering');
   await click(renderButton);
   assert(calls.some((call) => call.path.endsWith('/conversions/mp4')), 'MP4 rendering request sent');
+});
+
+await test('OSZ uploads add every extracted MP3 returned by the server', async () => {
+  await mount();
+  const archive = new File(['archive'], 'beatmap.osz', { type: 'application/x-osu-beatmap-archive' });
+  await files(find('.media-upload-panel input[multiple]'), [archive]);
+  await click(button('Upload media'));
+  assert(find('[aria-label="Select beatmap - first"]'), 'First archived MP3 listed');
+  assert(find('[aria-label="Select beatmap - second"]'), 'Second archived MP3 listed');
+  assert(host.textContent.includes('2 files added to your library.'), 'Extracted item count reported');
+});
+
+await test('Multiple OSZ files can be selected and uploaded together', async () => {
+  await mount();
+  const first = new File(['first'], 'first archive.osz', { type: 'application/x-osu-beatmap-archive' });
+  const second = new File(['second'], 'second archive.osz', { type: 'application/x-osu-beatmap-archive' });
+  await files(find('.media-upload-panel input[multiple]'), [first, second]);
+  await click(button('Upload media'));
+  const uploads = calls.filter((call) => call.path === '/api/media/upload');
+  assert(uploads.length === 2, 'Each selected OSZ was uploaded');
+  assert(find('[aria-label="Select first archive - first"]'), 'First archive items listed');
+  assert(find('[aria-label="Select second archive - first"]'), 'Second archive items listed');
 });
 
 await test('Audio without artwork requires a custom thumbnail before MP4 rendering', async () => {
