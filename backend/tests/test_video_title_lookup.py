@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.schemas.recommendation_providers import default_providers
 from app.services import custom_website_search as custom
-from app.services import recommendation_tools as tools, video_title_lookup as titles
+from app.services import recommendation_tools as tools, video_title_lookup as titles, thumbnail_domains
 
 PROVIDER = {"id": "vimeo.com", "name": "Vimeo", "domain": "vimeo.com", "enabled": True}
 URL = "https://vimeo.com/123"
@@ -18,6 +18,7 @@ PUBLIC_PAGE_FETCH = custom.fetch_public_page
 
 class VideoTitleLookupTest(unittest.TestCase):
     def setUp(self):
+        self.cdns = self.enterContext(patch.object(thumbnail_domains, "configured_domains", return_value=()))
         self.page = self.enterContext(patch.object(custom, "fetch_public_page", side_effect=custom.CustomSearchError("Page unavailable")))
         self.native = self.enterContext(patch.object(tools, "extract_video_metadata", side_effect=tools.ToolError("Metadata unavailable")))
 
@@ -48,10 +49,10 @@ class VideoTitleLookupTest(unittest.TestCase):
         self.assertEqual(cdn["thumbnail_url"], "https://i.vimeocdn.com/video/123.jpg")
         self.assertIsNone(unrelated["thumbnail_url"])
 
-    def test_page_metadata_accepts_configured_provider_cdn_and_lazy_metadata(self):
+    def test_page_metadata_accepts_shared_cdn_and_lazy_metadata(self):
+        self.cdns.return_value = ("example-cdn.net",)
         provider = {"id": "videos.example-media.com", "name": "Example videos",
-                    "domain": "videos.example-media.com", "enabled": True,
-                    "thumbnail_domains": ["example-cdn.net"]}
+                    "domain": "videos.example-media.com", "enabled": True}
         metadata = titles.page_metadata(
             '<meta itemprop="thumbnailUrl" content="https://thumb-v.example-cdn.net/a.jpg">',
             "text/html", "https://videos.example-media.com/videos/example", provider)

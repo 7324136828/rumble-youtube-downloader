@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.schemas.recommendation_providers import RecommendationProvider
-from app.services import custom_website_search as custom
+from app.services import custom_website_search as custom, thumbnail_domains
 
 
 def website(template="https://vimeo.com/?search={query}"):
@@ -25,6 +25,7 @@ def address(value="93.184.216.34"):
 
 class CustomWebsiteSearchTest(unittest.TestCase):
     def setUp(self):
+        self.cdns = self.enterContext(patch.object(thumbnail_domains, "configured_domains", return_value=()))
         self.resolve = self.enterContext(patch.object(custom.socket, "getaddrinfo", return_value=[address()]))
         self.factory = self.enterContext(patch.object(custom.requests, "Session"))
         self.session = self.factory.return_value.__enter__.return_value
@@ -219,10 +220,10 @@ class CustomWebsiteSearchTest(unittest.TestCase):
         self.assertEqual(fetch.call_count, 2)
 
     def test_fetch_all_uses_lazy_search_page_thumbnail_when_video_page_has_none(self):
+        self.cdns.return_value = ("example-cdn.net",)
         provider = RecommendationProvider(
             name="Example videos", domain="videos.example-media.com",
-            search_url="https://videos.example-media.com/?k={query}",
-            thumbnail_domains=["example-cdn.net"]).model_dump()
+            search_url="https://videos.example-media.com/?k={query}").model_dump()
         body = ('<a href="/clip/sample-item"><img alt="Bird video" '
                 'data-src="https://images-a.example-cdn.net/media/thumb.jpg"></a>')
         with patch.object(custom, "_search_page", return_value=(
@@ -233,10 +234,10 @@ class CustomWebsiteSearchTest(unittest.TestCase):
                          "https://images-a.example-cdn.net/media/thumb.jpg")
 
     def test_later_duplicate_card_fills_missing_structured_thumbnail(self):
+        self.cdns.return_value = ("example-cdn.net",)
         provider = RecommendationProvider(
             name="Example videos", domain="videos.example-media.com",
-            search_url="https://videos.example-media.com/?k={query}",
-            thumbnail_domains=["example-cdn.net"]).model_dump()
+            search_url="https://videos.example-media.com/?k={query}").model_dump()
         structured = json.dumps({"@type": "VideoObject", "url": "/clip/sample-item",
                                  "name": "Bird video"})
         body = ('<script type="application/ld+json">' + structured + '</script>'
@@ -249,10 +250,10 @@ class CustomWebsiteSearchTest(unittest.TestCase):
                          "https://images-b.example-cdn.net/media/thumb.jpg")
 
     def test_fetch_all_surfaces_thumbnail_cards_before_generic_links(self):
+        self.cdns.return_value = ("example-cdn.net",)
         provider = RecommendationProvider(
             name="Example videos", domain="videos.example-media.com",
-            search_url="https://videos.example-media.com/?k={query}",
-            thumbnail_domains=["example-cdn.net"]).model_dump()
+            search_url="https://videos.example-media.com/?k={query}").model_dump()
         body = ('<a href="/plain-link">Plain link</a>'
                 '<a href="/clip/sample-item"><img alt="Bird video" '
                 'data-src="https://images-b.example-cdn.net/media/thumb.jpg"></a>')

@@ -1,4 +1,4 @@
-"""Resolve configured video redirects without following an unchecked location."""
+"""Resolve user-supplied video redirects without following an unchecked location."""
 import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
@@ -6,6 +6,7 @@ from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 from curl_cffi import CurlOpt, requests
 
 from . import custom_website_search, recommendation_providers, recommendation_tools
+from .manual_video_urls import normalize_video_url, public_host
 
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 MAX_REDIRECTS = 5
@@ -31,13 +32,15 @@ def _safe_page_url(value, providers):
             raise ValueError()
         parsed = urlsplit(value)
         host = (parsed.hostname or "").lower().encode("idna").decode("ascii")
+        domain = public_host(host).removeprefix('www.')
         provider = next((item for item in providers if host == item["domain"] or host.endswith("." + item["domain"])), None)
-        if (provider is None or parsed.scheme != "https" or parsed.username is not None or parsed.password is not None
+        if (parsed.scheme != "https" or parsed.username is not None or parsed.password is not None
                 or parsed.port not in (None, 443) or parsed.fragment):
             raise ValueError()
+        provider = provider or {"id": domain, "domain": domain, "name": domain, "enabled": True}
         return urlunsplit(("https", host, parsed.path or "/", parsed.query, "")), provider
     except (UnicodeError, ValueError) as exc:
-        raise RedirectResolutionError("A video redirect must stay on a configured public HTTPS website.") from exc
+        raise RedirectResolutionError("A video redirect must use a public HTTPS website.") from exc
 
 
 def _probe(url, provider, guard):
@@ -67,10 +70,12 @@ def _probe(url, provider, guard):
 def resolve_video_url(value, providers, guard=lambda: None):
     """Return a canonical final video URL, or the canonical input if probing is unavailable."""
     configured = recommendation_providers.configured_providers(providers, enabled_only=False)
-    normalized = recommendation_tools.canonical_video_url(value, configured)
+    normalized = normalize_video_url(value, configured)
     if normalized is None:
-        raise RedirectResolutionError("Every saved URL must be an individual video on a configured website.")
+        raise RedirectResolutionError("Use a public HTTP or HTTPS video link.")
     original = normalized[1]
+    if urlsplit(original).scheme == "http" or urlsplit(original).port not in (None, 443):
+        return original
     current = original
     seen = set()
     try:
@@ -90,9 +95,9 @@ def resolve_video_url(value, providers, guard=lambda: None):
             status, location = _probe(current, provider, guard)
             guard()
             if status not in REDIRECT_STATUSES:
-                final = recommendation_tools.canonical_video_url(current, configured)
+                final = normalize_video_url(current, configured)
                 if final is None:
-                    raise RedirectResolutionError("The redirect did not end at an individual configured video.")
+                    raise RedirectResolutionError("The redirect did not end at a valid video URL.")
                 return final[1]
             if not isinstance(location, str) or not location.strip() or len(location) > 2048:
                 raise RedirectResolutionError("The video website returned an invalid redirect.")
@@ -100,7 +105,7 @@ def resolve_video_url(value, providers, guard=lambda: None):
             target = urlsplit(current)
             if (target.scheme != "https" or target.username is not None or target.password is not None
                     or target.port not in (None, 443) or target.fragment):
-                raise RedirectResolutionError("A video redirect must stay on configured public HTTPS websites.")
+                raise RedirectResolutionError("A video redirect must use public HTTPS websites.")
         raise RedirectResolutionError(f"The video redirected more than {MAX_REDIRECTS} times.")
     except RedirectUnavailable:
         return original
@@ -120,9 +125,9 @@ def resolve_import(videos, providers):
         try:
             return {**video, "source_url": resolve_video_url(video["source_url"], providers, guard)}
         except RedirectUnavailable:
-            normalized = recommendation_tools.canonical_video_url(video["source_url"], providers)
+            normalized = normalize_video_url(video["source_url"], providers)
             if normalized is None:
-                raise RedirectResolutionError("Every saved URL must be an individual video on a configured website.")
+                raise RedirectResolutionError("Use a public HTTP or HTTPS video link.")
             return {**video, "source_url": normalized[1]}
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="watch-later-redirect") as executor:

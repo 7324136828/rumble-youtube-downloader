@@ -96,7 +96,6 @@ class RecommendationProvider(BaseModel):
     domain: str = Field(min_length=1, max_length=2048)
     enabled: bool = True
     search_url: str | None = Field(default=None, max_length=2048)
-    thumbnail_domains: list[str] = Field(default_factory=list, max_length=8)
 
     @field_validator("name")
     @classmethod
@@ -110,14 +109,6 @@ class RecommendationProvider(BaseModel):
     @classmethod
     def clean_domain(cls, value):
         return normalize_domain(value)
-
-    @field_validator("thumbnail_domains")
-    @classmethod
-    def clean_thumbnail_domains(cls, value):
-        domains = [normalize_domain(domain) for domain in value]
-        if len(set(domains)) != len(domains):
-            raise ValueError("Thumbnail CDN domains must be unique")
-        return domains
 
     @model_validator(mode="after")
     def canonical_id(self):
@@ -133,8 +124,6 @@ class RecommendationProvider(BaseModel):
         value = handler(self)
         if self.search_url is None:
             value.pop("search_url", None)
-        if not self.thumbnail_domains:
-            value.pop("thumbnail_domains", None)
         return value
 
 

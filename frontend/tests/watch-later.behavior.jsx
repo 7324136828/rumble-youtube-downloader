@@ -40,7 +40,7 @@ window.fetch = async (path, options = {}) => {
       if (!error) for (const entry of body.videos) {
         const existing = catalog.find((item) => item.source_url === entry.source_url);
         const title = entry.title || existing?.title || entry.source_url;
-        const item = { ...existing, ...entry, catalog_id: existing?.catalog_id || catalog.length + 1, connector: entry.source_url.includes('vimeo') ? 'vimeo.com' : 'youtube', title, origins: ['watch_later'], user_added: true, verified: false, title_fetch_status: title === entry.source_url && body.fetch_titles !== false ? 'pending' : 'idle', title_fetch_error: null };
+        const item = { ...existing, ...entry, catalog_id: existing?.catalog_id || catalog.length + 1, connector: entry.source_url.includes('vimeo') ? 'vimeo.com' : entry.source_url.includes('youtube') ? 'youtube' : new URL(entry.source_url).hostname, title, origins: ['watch_later'], user_added: true, verified: false, title_fetch_status: title === entry.source_url && body.fetch_titles !== false ? 'pending' : 'idle', title_fetch_error: null };
         if (existing) { catalog = catalog.map((old) => old.catalog_id === existing.catalog_id ? item : old); updated++; }
         else { catalog.push(item); added++; }
         saved.push(item);
@@ -175,6 +175,17 @@ await test('Pasted links save optional metadata, deduplicate batches, and refres
   assert(calls.filter((call) => call.path === '/api/recommendations/settings').length >= 3, 'Mutations refresh shared recommendation settings');
   equal(downloads().length, 0, 'Saving a batch does not queue downloads');
 });
+await test('Manual save and playback work with no recommendation providers', async () => {
+  const url = 'https://archive.org/details/my-video';
+  await input(find('#watch-later-urls'), url);
+  await input(find('#watch-later-title'), 'My video');
+  await click(button('Save for later'));
+  equal(writes()[0].body.videos[0].source_url, url, 'Unconfigured URL saved unchanged');
+  equal(settings.providers.length, 0, 'Saving does not enable recommendation providers');
+  await click(find('[aria-label^="Play saved video:"]'));
+  equal(downloads()[0].body.urls[0], url, 'Manual playback queues the saved video');
+  equal(location.hash, '#watch/watch-later-media', 'Ready media opens in Watch');
+}, () => { settings.providers = []; });
 await test('JSON array and videos-object imports preserve metadata and reject malformed files', async () => {
   await upload([{ source_url: video.source_url, title: 'Imported film', description: 'Imported note' }]);
   equal(writes()[0].body.videos[0].description, 'Imported note', 'Array import metadata is preserved');

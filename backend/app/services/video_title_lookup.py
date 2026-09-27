@@ -1,11 +1,11 @@
-"""Read-only title discovery for an explicitly requested configured video URL."""
+"""Read-only title discovery for an explicitly requested video URL."""
 import re
 import time
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 from ..schemas.recommendation_providers import RecommendationProvider
-from . import custom_website_search, native_provider_search, recommendation_tools
+from . import custom_website_search, native_provider_search, recommendation_tools, thumbnail_domains
 from .title_quality import is_placeholder_title
 
 LOOKUP_TIMEOUT = 45
@@ -130,17 +130,7 @@ def safe_thumbnail_url(value, page_url, provider):
         thumbnail = native_provider_search._thumbnail(candidate, provider["domain"])
         if thumbnail and thumbnail.startswith("https://"):
             return thumbnail
-    try:
-        parsed = urlsplit(candidate)
-        roots = provider.get("thumbnail_domains", ())
-        hostname = (parsed.hostname or "").lower()
-        if (parsed.scheme == "https" and parsed.username is None and parsed.password is None
-                and parsed.port in (None, 443)
-                and any(hostname == root or hostname.endswith("." + root) for root in roots)):
-            return candidate
-    except (ValueError, UnicodeError):
-        pass
-    return None
+    return thumbnail_domains.safe_cdn_url(candidate)
 
 
 def page_metadata(body, content_type, canonical, provider, page_url=None):
@@ -180,13 +170,13 @@ def lookup_title(source_url: str, provider: dict, guard=lambda: None) -> str:
         # A user-requested saved-video lookup also works for disabled providers.
         provider = {**RecommendationProvider.model_validate(provider).model_dump(), "enabled": True}
     except (ValueError, TypeError) as exc:
-        raise TitleLookupError("Choose a video from a configured website.") from exc
+        raise TitleLookupError("Use a valid public video URL.") from exc
     normalized = recommendation_tools.canonical_video_url(source_url, [provider])
     if not normalized:
-        raise TitleLookupError("Use an individual video URL from this configured website.")
+        raise TitleLookupError("Use an individual video URL from this website.")
     canonical = normalized[1]
     try:
-        metadata = recommendation_tools.extract_video_metadata(canonical, check, providers=[provider])
+        metadata = recommendation_tools.extract_video_metadata(canonical, check, providers=[provider], manual=True)
     except recommendation_tools.ToolError:
         metadata = {}
     check()

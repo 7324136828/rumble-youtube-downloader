@@ -176,6 +176,10 @@ export function getWatchHistory(signal) {
   return request('/watch-history?limit=100', { signal });
 }
 
+export function removeWatchHistory(videoId) {
+  return request(`/watch-history/${encodeURIComponent(videoId)}`, { method: 'DELETE' });
+}
+
 export function getRecommendationSettings(signal) {
   return request('/recommendations/settings', { signal });
 }

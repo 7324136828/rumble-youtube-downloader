@@ -79,7 +79,7 @@ class RecommendationCatalogTest(unittest.TestCase):
         self.assertEqual(updated["items"][0]["verification"], "provider_search")
 
     def test_import_invalid_url_is_atomic_and_rejects_injected_provenance(self):
-        for bad in ("https://vimeo.com/123", "https://youtube.com/channel/abc",
+        for bad in ("javascript:alert(1)", "https://youtube.com/channel/abc",
                     "https://user:secret@youtube.com/watch?v=abcdefghijk", "https://localhost/video/123"):
             response = self.client.post("/api/recommendations/watch-later", json={"videos": [
                 {"source_url": URL}, {"source_url": bad}]})
@@ -90,6 +90,17 @@ class RecommendationCatalogTest(unittest.TestCase):
             self.assertEqual(response.status_code, 422, response.text)
         self.assertEqual(self.query("SELECT * FROM recommendation_videos"), [])
         self.assertEqual(db.get_recommendation_settings()["revision"], 0)
+
+    def test_manual_saves_accept_unconfigured_websites_without_enabling_discovery(self):
+        db.update_recommendation_settings({"providers": []})
+        saved = self.save({"source_url": "https://vimeo.com/123", "title": "My video"},
+                          {"source_url": URL}, {"source_url": "https://archive.org/download/movie/movie.mp4"})
+        self.assertEqual(saved["added"], 3)
+        self.assertEqual(db.get_recommendation_settings()["providers"], [])
+        self.assertEqual(db.list_catalog_candidates([]), [])
+        self.assertEqual(db.list_watch_later()["total"], 3)
+        self.assertEqual(saved["items"][0]["connector"], "vimeo.com")
+        self.assertEqual(self.save({"source_url": "https://vimeo.com/123"})["updated"], 1)
 
     def test_duplicate_import_retains_explicit_text_when_last_alias_omits_it(self):
         saved = self.save({"source_url": URL, "title": "Personal title", "description": "Personal note"},

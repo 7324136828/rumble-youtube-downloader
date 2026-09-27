@@ -197,7 +197,7 @@ def _list_watched(request, base_url):
         rows = conn.execute(f"SELECT h.* FROM watch_history h WHERE {where}"
                             f" ORDER BY h.last_watched_at {direction}, h.video_id {direction} LIMIT ? OFFSET ?",
                             [*params, request.limit, request.offset]).fetchall()
-    items = _enrich([{**dict(row), "completed": bool(row["completed"])} for row in rows], base_url)
+    items = _enrich([db.watch_history_payload(row) for row in rows], base_url)
     return _with_players(_page(items, total, request, date_field="last_watched_at",
                               history_kind="per_video_watch_totals"), items)
 

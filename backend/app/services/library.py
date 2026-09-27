@@ -418,6 +418,7 @@ def cancel_and_delete(video_id: str) -> None:
         with _MEDIA_EDIT_LOCK:
             row = db.get_video(video_id)
             if row and row.get("media_dir"):
+                db.preserve_watch_thumbnail(video_id)
                 media_dir = Path(row["media_dir"])
                 for _ in range(10):
                     shutil.rmtree(media_dir, ignore_errors=True)

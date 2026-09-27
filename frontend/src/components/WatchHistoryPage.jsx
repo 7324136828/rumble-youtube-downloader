@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { getWatchHistory, startDownloads } from '../services/api';
+import { getWatchHistory, removeWatchHistory, startDownloads } from '../services/api';
 import { connectorBadgeClass, formatDuration } from '../mediaUtils';
 import { recommendationProviderIcon, recommendationProviderLabel, recommendationSource } from '../recommendationUtils';
 import { useRecommendations } from './RecommendationContext';
@@ -14,6 +14,17 @@ export default function WatchHistoryPage({ navigate }) {
   const [error, setError] = useState('');
   const [source, setSource] = useState('all');
   const [redownloads, setRedownloads] = useState({});
+  const [deleting, setDeleting] = useState(() => new Set());
+  const deleteEntry = async (item) => {
+    if (deleting.has(item.video_id)) return;
+    setDeleting((previous) => new Set(previous).add(item.video_id));
+    setError('');
+    try {
+      await removeWatchHistory(item.video_id);
+      setHistory((previous) => previous.filter((entry) => entry.video_id !== item.video_id));
+    } catch (err) { setError(err.message || 'Could not remove this watch history entry.'); }
+    finally { setDeleting((previous) => { const next = new Set(previous); next.delete(item.video_id); return next; }); }
+  };
   useEffect(() => {
     const controller = new AbortController();
     getWatchHistory(controller.signal).then((items) => {
@@ -35,7 +46,7 @@ export default function WatchHistoryPage({ navigate }) {
       const media = (await startDownloads([item.source_url], 'best'))?.[0];
       if (!media?.id) throw new Error('The video could not be added to Downloads.');
       if (media.status === 'ready') {
-        setHistory((previous) => previous.map((entry) => entry.video_id === item.video_id ? { ...entry, media_id: media.id, thumbnail_url: media.thumbnail_url || null } : entry));
+        setHistory((previous) => previous.map((entry) => entry.video_id === item.video_id ? { ...entry, media_id: media.id, thumbnail_url: entry.thumbnail_url || media.thumbnail_url || null } : entry));
         setRedownloads((previous) => ({ ...previous, [key]: { status: 'ready' } }));
       } else {
         setRedownloads((previous) => ({ ...previous, [key]: { status: 'queued', media_id: media.id } }));
@@ -61,6 +72,7 @@ export default function WatchHistoryPage({ navigate }) {
             : item.connector === 'upload' ? <button className="btn-secondary" onClick={() => navigate('downloads')}>Upload again</button>
             : redownloads[item.source_url]?.status === 'queued' ? <button className="btn-secondary" onClick={() => navigate('downloads')}>View download</button>
               : <button className="btn-secondary" disabled={redownloads[item.source_url]?.status === 'starting'} onClick={() => downloadAgain(item)}><Icon name="download" size={14} />{redownloads[item.source_url]?.status === 'starting' ? 'Adding...' : redownloads[item.source_url]?.status === 'failed' ? 'Retry download' : 'Download again'}</button>}
+          <button className="icon-btn danger-hover" aria-label={`Delete watch history for ${item.title || item.source_url}`} title="Delete from watch history" disabled={deleting.has(item.video_id)} onClick={() => deleteEntry(item)}><Icon name="trash" size={17} /></button>
         </article>) : <div className="collection-empty"><Icon name="history" size={29} /><h3>No watch history for this website</h3><p>Play a downloaded video to add it here.</p></div>}
       </section><RecommendationPanel context="history" navigate={navigate} /></div>}
   </div>;

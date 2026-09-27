@@ -4,8 +4,10 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlsplit
 
 from .. import config
+from ..schemas.recommendation_providers import RecommendationProvider
 from . import ai_title_lookup, db, recommendation_providers, video_title_lookup, watch_later_thumbnails
 
 MAX_PENDING = 256
@@ -38,7 +40,14 @@ def shutdown():
 def _provider(item):
     providers = recommendation_providers.configured_providers(
         db.get_recommendation_settings().get("providers"), enabled_only=False)
-    return next((provider for provider in providers if provider["id"] == item["connector"]), None)
+    configured = next((provider for provider in providers if provider["id"] == item["connector"]), None)
+    if configured:
+        return configured
+    try:
+        return RecommendationProvider(domain=urlsplit(item["source_url"]).hostname,
+                                      name=item["connector"][:60]).model_dump()
+    except (ValueError, TypeError):
+        return None
 
 
 def _run(key, token, item, provider, force=False):
@@ -98,7 +107,7 @@ def request_title(catalog_id, force=False):
         return {"item": item, "queued": False}
     provider = _provider(item)
     if provider is None:
-        raise ValueError("Add this video's website to Recommendation websites before fetching its title.")
+        raise ValueError("This video's URL cannot be used for title lookup.")
     key = (_database_key(), catalog_id)
     queued = False
     with _LOCK:

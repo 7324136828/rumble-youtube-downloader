@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
 from app import config
 from app.main import app
-from app.services import db
+from app.services import db, library
 from app.schemas.recommendation_providers import default_providers
 
 
@@ -20,8 +20,10 @@ class WatchHistoryTest(unittest.TestCase):
         self.enterContext(patch.object(config, "JOBS_DB_PATH", Path(folder) / "jobs.db"))
         db.init_db()
         self.client = self.enterContext(TestClient(app))
-        db.create_video("one", "https://www.youtube.com/watch?v=abcdefghijk", "youtube", "best", folder)
-        self.thumbnail = Path(folder) / "one.jpg"
+        self.media_dir = Path(folder) / "one"
+        self.media_dir.mkdir()
+        db.create_video("one", "https://www.youtube.com/watch?v=abcdefghijk", "youtube", "best", self.media_dir)
+        self.thumbnail = self.media_dir / "one.jpg"
         self.thumbnail.write_bytes(b"thumbnail")
         db.update_video("one", status="ready", title="River wildlife", uploader="Nature channel",
                         duration=120, thumbnail_path=str(self.thumbnail))
@@ -43,7 +45,7 @@ class WatchHistoryTest(unittest.TestCase):
         self.assertEqual(history[0]["position_seconds"], 119)
         self.assertTrue(history[0]["completed"])
         self.assertIsNone(history[0]["media_id"])
-        self.assertIsNone(history[0]["thumbnail_url"])
+        self.assertEqual(history[0]["thumbnail_url"], "/api/watch-history/one/thumbnail")
         self.assertNotIn("media_dir", history[0])
 
         db.create_video("downloaded-again", "https://www.youtube.com/watch?v=abcdefghijk",
@@ -52,17 +54,43 @@ class WatchHistoryTest(unittest.TestCase):
                         thumbnail_path=str(self.thumbnail))
         restored = self.client.get("/api/watch-history").json()[0]
         self.assertEqual(restored["media_id"], "downloaded-again")
-        self.assertEqual(restored["thumbnail_url"],
-                         "/api/media/downloaded-again/thumbnail")
+        self.assertEqual(restored["thumbnail_url"], "/api/watch-history/one/thumbnail")
 
     def test_history_uses_local_thumbnail_endpoint_without_exposing_its_path(self):
         self.post()
         history = self.client.get("/api/watch-history").json()[0]
-        self.assertEqual(history["thumbnail_url"], "/api/media/one/thumbnail")
+        self.assertEqual(history["thumbnail_url"], "/api/watch-history/one/thumbnail")
         self.assertNotIn("thumbnail_path", history)
+        self.assertNotIn("thumbnail", history)
         thumbnail = self.client.get(history["thumbnail_url"])
         self.assertEqual(thumbnail.status_code, 200)
         self.assertEqual(thumbnail.content, b"thumbnail")
+
+    def test_thumbnail_survives_library_file_deletion_and_restart(self):
+        self.post()
+        library.cancel_and_delete("one")
+        self.assertFalse(self.thumbnail.exists())
+        db.init_db()
+        item = db.list_watch_history()[0]
+        self.assertEqual(self.client.get(item["thumbnail_url"]).content, b"thumbnail")
+
+    def test_existing_history_migration_preserves_available_thumbnails(self):
+        self.post()
+        with db._LOCK, db._connect() as conn:
+            conn.execute("ALTER TABLE watch_history DROP COLUMN thumbnail")
+            conn.execute("ALTER TABLE watch_history DROP COLUMN thumbnail_type")
+        db.init_db()
+        self.assertEqual(self.client.get(db.list_watch_history()[0]["thumbnail_url"]).content, b"thumbnail")
+
+    def test_deleting_history_removes_thumbnail_and_keeps_library_video(self):
+        self.post()
+        response = self.client.delete("/api/watch-history/one")
+        self.assertEqual(response.json(), {"removed": True})
+        self.assertEqual(db.list_watch_history(), [])
+        self.assertIsNotNone(db.get_video("one"))
+        self.assertTrue(self.thumbnail.exists())
+        self.assertEqual(self.client.get("/api/watch-history/one/thumbnail").status_code, 404)
+        self.assertEqual(self.client.delete("/api/watch-history/one").json(), {"removed": False})
 
     def test_preloading_without_playback_is_not_watch_history(self):
         self.assertFalse(self.post(watched_seconds=0).json()["recorded"])
@@ -103,7 +131,7 @@ class WatchHistoryTest(unittest.TestCase):
             "enabled": False, "model_id": None, "seed_keywords": [], "custom_prompt": "",
             "allow_unverified_links": False, "allow_ai_title_lookup": False,
             "fetch_all_search_links": False, "providers": default_providers(),
-            "fallback_weights": {"custom_search": 50, "public_search": 0, "watch_later": 50}, "revision": 0})
+            "thumbnail_domains": [], "fallback_weights": {"custom_search": 50, "public_search": 0, "watch_later": 50}, "revision": 0})
         saved = db.update_recommendation_settings({"model_id": "my-recommender", "seed_keywords": ["wildlife"], "enabled": True})
         self.assertEqual(saved["revision"], 1)
         db.init_db()

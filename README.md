@@ -102,7 +102,15 @@ from a configured search page instead of the normal bounded selection. The choic
 is retained in the search-page URL. The backend then makes a bounded, concurrent
 attempt to read each linked page's title and thumbnail metadata. If a title cannot
 be fetched, its original search-page label is kept. Lazy-loaded thumbnails found
-directly on the search page are also retained for supported provider CDNs.
+directly on the search page are also retained for supported CDNs.
+
+Manage additional thumbnail hosts in **AI recommendations → Thumbnail CDN domains**.
+This shared list is saved in the local database and applies to every video website,
+independently of recommendation providers. Add up to 128 public domains separated
+by commas or new lines; their subdomains are included. **Detect from website**
+suggests hosts from a configured website for review; click **Save CDN domains**
+to persist them. Existing per-website CDN entries move into the shared list when
+the backend starts, and removing a provider leaves the CDN list intact.
 
 Online search requires internet access. YouTube and Rumble use their built-in
 searches. Custom websites use a configured search URL or an available native
@@ -158,6 +166,10 @@ return no usable videos.
 Recommendations default to **All enabled websites**, regardless of the current
 video's source. Use the recommendation panel's selector for a specific website;
 the **Watch history** list filter does not restrict recommendation sources.
+
+Watch history keeps a separate thumbnail copy when library videos are removed or
+expire. Use the trash button on a history entry to remove its history and saved
+thumbnail; the downloaded video remains in your library.
 Suggestions also appear in an empty/end-of-list
 Swipe feed and alongside Watch's Up next list. Select **Play** for saved videos or
 **Download** for new ones. Downloads run independently and stay on the current screen
@@ -174,7 +186,9 @@ filters, in-chat playback, and activity logging.
 
 **Watch later** lets you paste video URLs, add an optional title/description,
 import JSON, filter entries by website, or remove saved links. It works with AI
-off and does not download videos. Leave the title blank to fetch it in the
+off and accepts video links from any public website without configuring a
+recommendation provider. Video downloads use yt-dlp's supported extractors.
+Saving does not download videos. Leave the title blank to fetch it in the
 background; supplied titles are preserved. The saved list shows **Fetching title**,
 updates automatically, and offers **Fetch title** or **Retry title** for existing
 untitled entries. Title lookup tries the website's yt-dlp metadata extractor before
@@ -200,8 +214,9 @@ succeeds. Failed attempts offer **Retry title** and manual title entry.
 non-video links; archived links use separate SQLite records and never become
 recommendation candidates. Before saving,
 the backend manually resolves up to five HTTP
-redirects and stores the final canonical URL. Each hop must remain on a configured
-public HTTPS video website; redirect loops and unrelated destinations are rejected.
+redirects and stores the final canonical URL. HTTPS redirect destinations can be
+on any public website; redirect loops and invalid destinations are rejected.
+HTTP links are saved directly for the downloader to handle.
 If **AI title fallback** is enabled in Recommendations, the selected Connector model
 is tried only after normal metadata lookup fails. AI titles are labeled and do not
 verify the video. Explicitly saved links are eligible for
