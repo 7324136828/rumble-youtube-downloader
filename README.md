@@ -272,8 +272,11 @@ Each saved item has a **Convert to MP3** action. Once conversion completes, Watc
 and Swipe feed play the MP3 while keeping its thumbnail visible. The original
 video is retained; use **Play video** to switch back or **Play MP3** to select audio
 again. MP3 files can also be downloaded separately. In **Downloads**, select
-individual cards or **Select all visible**, then **Convert selected to MP3** to
-queue a batch. Conversion failures remain visible and can be retried.
+individual cards or **Select all visible** to download their original files or
+available MP3 conversions. Items without a completed MP3 conversion are skipped
+by the MP3 download button. **Convert selected to MP3** queues conversions;
+conversion failures remain visible and can be retried. Your browser may ask
+permission to download multiple files.
 
 Use **Upload your own media** in My library or Downloads to add one or more local
 audio/video files. MP3, MP4, and other formats readable by FFmpeg are accepted;

@@ -54,6 +54,14 @@ const assert = (value, message) => { if (!value) throw new Error(message); };
 const find = (selector) => { const found = host.querySelector(selector); assert(found, `Missing ${selector}`); return found; };
 const button = (label) => { const found = [...host.querySelectorAll('button')].find((node) => node.textContent.trim() === label); assert(found, `Missing button ${label}`); return found; };
 const click = async (node) => act(async () => { node.click(); });
+async function captureDownloads(action) {
+  const downloads = [];
+  const originalClick = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function () { downloads.push({ url: this.getAttribute('href'), downloadable: this.hasAttribute('download') }); };
+  try { await action(); }
+  finally { HTMLAnchorElement.prototype.click = originalClick; }
+  return downloads;
+}
 async function files(input, selected) {
   const transfer = new DataTransfer();
   selected.forEach((file) => transfer.items.add(file));
@@ -95,6 +103,29 @@ await test('Select all follows the visible source filter', async () => {
   await click(button('Convert selected to MP3'));
   const conversions = calls.filter((call) => call.path.endsWith('/conversions/mp3'));
   assert(conversions.length === 2 && conversions.every((call) => !call.path.includes('/three/')), 'Hidden source excluded');
+});
+
+await test('Bulk buttons download selected originals and only available MP3s', async () => {
+  media[0].conversions = { mp3: { status: 'completed', download_url: '/one.mp3' } };
+  media[1].conversions = { mp3: { status: 'queued', download_url: '/two.mp3' } };
+  media[2].conversions = { mp3: { status: 'completed', download_url: '/three.mp3' } };
+  await mount();
+  await click(find('[aria-label="Select all visible"]'));
+  const originals = await captureDownloads(() => click(button('Download selected videos')));
+  assert(originals.length === 3 && originals.every((item) => item.url === '/tests/player.fixture.webm' && item.downloadable), 'Every selected original file requested');
+  const mp3s = await captureDownloads(() => click(button('Download selected items as MP3')));
+  assert(mp3s.length === 2 && mp3s.every((item) => item.downloadable), 'Only completed MP3 downloads requested');
+  assert(mp3s.map((item) => item.url).join(',') === '/one.mp3,/three.mp3', 'Unavailable MP3 is skipped');
+  assert(find('[aria-label="Select all visible"]').checked, 'Download keeps selection for another action');
+  assert(host.textContent.includes('Skipped 1 selected item'), 'Skipped item is explained');
+});
+
+await test('MP3 bulk download is unavailable until a selected conversion is ready', async () => {
+  media[0].conversions = { mp3: { status: 'completed', download_url: null } };
+  await mount();
+  await click(find('[aria-label="Select Video one"]'));
+  assert(button('Download selected items as MP3').disabled, 'Completed conversion without a file is unavailable');
+  assert(!button('Download selected videos').disabled, 'Original download remains available');
 });
 
 await test('Uploads send actual files and artwork and show both audio and video in Downloads', async () => {
