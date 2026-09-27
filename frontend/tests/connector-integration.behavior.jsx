@@ -9,7 +9,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const host = document.getElementById('test-root');
 const report = [];
 const suggestion = { id: 'youtube:abcdefghijk', title: 'River wildlife', source_url: 'https://www.youtube.com/watch?v=abcdefghijk', connector: 'youtube', uploader: 'Nature channel', thumbnail_url: null };
-let root, calls, status, settings, connectFailure, recommendationResponse;
+let root, calls, status, settings, connectFailure, recommendationResponse, keywordItems;
 window.fetch = async (path, options = {}) => {
   const url = new URL(path, location.origin);
   const body = options.body ? JSON.parse(options.body) : undefined;
@@ -32,7 +32,7 @@ window.fetch = async (path, options = {}) => {
   else if (url.pathname === '/api/video-keywords') {
     const query = url.searchParams.get('q') || '';
     const matchingRequests = calls.filter((call) => call.path === '/api/video-keywords' && call.query.q === query);
-    value = { query, keywords: [{ keyword: 'wildlife', count: 2 }, { keyword: 'rivers', count: 1 }], videos: [], status: { pending: query && matchingRequests.length === 1 ? 1 : 0 } };
+    value = { query, keywords: keywordItems, videos: [], status: { pending: query && matchingRequests.length === 1 ? 1 : 0 } };
   }
   else throw new Error(`Unexpected test request ${method} ${path}`);
   return { ok: !error, status: error ? 502 : 200, json: async () => error ? { detail: error } : value };
@@ -65,6 +65,7 @@ async function test(name, body) {
   status = { enabled: false, base_url: 'http://127.0.0.1:8000', connector_url: 'http://127.0.0.1:8301', session_id: null, registered_tools: [], pending_events: 0, last_error: null };
   settings = { enabled: true, model_id: 'test-model', revision: 0, providers: [{ id: 'youtube', name: 'YouTube', enabled: true }, { id: 'rumble', name: 'Rumble', enabled: true }] };
   recommendationResponse = async () => ({ status: 'ready', items: [suggestion], keywords: [] });
+  keywordItems = [{ keyword: 'wildlife', count: 2 }, { keyword: 'rivers', count: 1 }];
   try { await body(); report.push({ name, passed: true }); }
   catch (error) { report.push({ name, passed: false, message: error.message }); }
   finally {
@@ -198,6 +199,18 @@ await test('Video topics searches share a session across background refreshes', 
   assert(topicCalls().at(-1).query.session !== firstSearch.query.session, 'A different query starts a fresh search session');
   await click(find('button[aria-label="Clear keyword search"]'));
   equal(topicCalls().at(-1).query.session, undefined, 'Clearing topics does not log a blank search');
+});
+
+await test('Video topics initially show 30 words and reveal 30 more at a time', async () => {
+  keywordItems = Array.from({ length: 65 }, (_, index) => ({ keyword: `topic ${index + 1}`, count: 65 - index }));
+  await mount(<KeywordLibraryPage navigate={() => {}} />);
+  equal(host.querySelectorAll('.keyword-cloud button').length, 30, 'Initial cloud is limited to the top 30 words');
+  equal(button('Add more (30)').getAttribute('aria-controls'), 'keyword-cloud', 'Expansion identifies the word cloud');
+  await click(button('Add more (30)'));
+  equal(host.querySelectorAll('.keyword-cloud button').length, 60, 'First expansion reveals 30 more words');
+  await click(button('Add more (5)'));
+  equal(host.querySelectorAll('.keyword-cloud button').length, 65, 'Final expansion reveals the remaining words');
+  equal([...host.querySelectorAll('button')].some((item) => item.textContent.startsWith('Add more')), false, 'Expansion control is removed when all words are visible');
 });
 
 const passed = report.filter((item) => item.passed).length;

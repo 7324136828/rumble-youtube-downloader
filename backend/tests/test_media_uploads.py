@@ -11,6 +11,7 @@ import threading
 import time
 import unittest
 import wave
+import zipfile
 import zlib
 from contextlib import closing
 from pathlib import Path
@@ -91,6 +92,13 @@ class MediaUploadsTest(unittest.TestCase):
             check=True, timeout=30,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         cls.mp4 = mp4_path.read_bytes()
+        mp3_path = cls.fixture_dir / "audio.mp3"
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-i", str(wav_path), "-c:a", "libmp3lame", "-q:a", "4", str(mp3_path)],
+            check=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        cls.mp3 = mp3_path.read_bytes()
         cls.red_artwork = _png((255, 0, 0))
         cls.blue_artwork = _png((0, 0, 255))
 
@@ -127,6 +135,14 @@ class MediaUploadsTest(unittest.TestCase):
         self.assertEqual(db.list_videos(), [])
         self.assertEqual(list(self.media_root.iterdir()) if self.media_root.exists() else [], [])
 
+    @staticmethod
+    def osz_bytes(entries):
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, content in entries:
+                archive.writestr(name, content)
+        return output.getvalue()
+
     def test_audio_upload_plays_mp3_with_custom_artwork_and_keeps_original(self):
         item = self.upload(thumbnail=self.red_artwork, title="My recording")
         self.assertEqual(item["connector"], "upload")
@@ -159,6 +175,65 @@ class MediaUploadsTest(unittest.TestCase):
         self.assertEqual(artwork.headers["content-type"], "image/jpeg")
         self.assertTrue(artwork.content.startswith(b"\xff\xd8"))
         self.assertIn(item["id"], [row["id"] for row in self.client.get("/api/media").json()])
+
+    def test_osz_upload_extracts_each_safe_mp3_as_a_separate_audio_item(self):
+        archive = self.osz_bytes([
+            ("songs/first.mp3", self.mp3),
+            ("second.MP3", self.mp3),
+            ("../escape.mp3", self.mp3),
+            ("beatmap.osu", b"[General]\nAudioFilename: first.mp3\n"),
+        ])
+        response = self.client.post("/api/media/upload", files={
+            "file": ("collection.osz", archive, "application/x-osu-beatmap-archive"),
+            "thumbnail": ("cover.png", self.red_artwork, "image/png"),
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        initial = response.json()
+        self.assertEqual(len(initial), 2)
+        for item in initial:
+            self.addCleanup(library.cancel_and_delete, item["id"])
+            ready = library.wait_for(item["id"], 30)
+            self.assertEqual(ready["status"], "ready", ready)
+
+        items = [self.client.get(f"/api/media/{item['id']}").json() for item in initial]
+        self.assertEqual({item["title"] for item in items},
+                         {"collection - first", "collection - second"})
+        self.assertTrue(all(item["media_kind"] == "audio" for item in items))
+        self.assertTrue(all(item["playback_format"] == "mp3" for item in items))
+        self.assertTrue(all(item["thumbnail_url"] for item in items))
+        self.assertTrue(all(self.client.get(item["download_url"]).content == self.mp3
+                            for item in items))
+        self.assertFalse((self.folder / "escape.mp3").exists())
+
+    def test_osz_upload_uses_archive_name_by_default_and_allows_an_override(self):
+        archive = self.osz_bytes([("audio/song.mp3", self.mp3)])
+        cases = [
+            ({}, "my sound life - reconstruction"),
+            ({"title": "My custom title"}, "My custom title"),
+        ]
+        for data, expected in cases:
+            with self.subTest(expected=expected):
+                response = self.client.post("/api/media/upload", files={
+                    "file": ("my sound life - reconstruction.osz", archive,
+                             "application/x-osu-beatmap-archive")}, data=data)
+                self.assertEqual(response.status_code, 200, response.text)
+                initial = response.json()
+                self.assertEqual(len(initial), 1)
+                self.addCleanup(library.cancel_and_delete, initial[0]["id"])
+                self.assertEqual(initial[0]["title"], expected)
+
+    def test_osz_upload_rejects_invalid_or_mp3_free_archives_without_orphans(self):
+        archives = [
+            b"not a zip file",
+            self.osz_bytes([("beatmap.osu", b"no audio here")]),
+            self.osz_bytes([("fake.mp3", b"not an MP3")]),
+        ]
+        for archive in archives:
+            with self.subTest(archive=archive[:12]):
+                response = self.client.post("/api/media/upload", files={
+                    "file": ("broken.osz", archive, "application/octet-stream")})
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assert_empty_library()
 
     def test_video_conversion_selects_mp3_and_persists_playback_choice(self):
         item = self.upload("custom.mp4", self.mp4)

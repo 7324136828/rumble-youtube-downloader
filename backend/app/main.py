@@ -84,7 +84,6 @@ def record_watch_history(event: WatchEvent):
     if row is not None:
         try:
             connector_activity.record_watch(row, event.watched_seconds, row["position_seconds"], event.completed)
-            connector_bridge.wake()
         except Exception:
             # Optional activity logging must not fail an already-saved playback report.
             logging.getLogger(__name__).warning("Could not queue Connector playback activity.")
@@ -369,7 +368,12 @@ def list_media(status: str | None = None):
 def upload_media(file: UploadFile = File(...), thumbnail: UploadFile | None = File(None),
                  title: str | None = Form(None, max_length=500)):
     try:
-        row = library.start_upload(file.file, file.filename or "Uploaded media", title,
+        filename = file.filename or "Uploaded media"
+        if Path(filename.replace("\\", "/")).suffix.lower() == ".osz":
+            rows = library.start_osz_upload(
+                file.file, filename, title, thumbnail.file if thumbnail else None)
+            return [library.video_payload(row) for row in rows]
+        row = library.start_upload(file.file, filename, title,
                                    thumbnail.file if thumbnail else None)
         return library.video_payload(row)
     except library.UploadTooLarge as exc:
@@ -423,7 +427,6 @@ def list_video_keywords(q: str = Query("", max_length=100),
         try:
             connector_activity.record_search(q.strip(), "library_keywords", len(catalog["videos"]),
                                              session_id=session)
-            connector_bridge.wake()
         except Exception:
             logging.getLogger(__name__).warning("Could not queue Connector keyword search activity.")
     return catalog

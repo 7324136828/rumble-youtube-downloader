@@ -48,11 +48,13 @@ class ConnectorBridgeTest(unittest.TestCase):
             session_id = f"system-{self.session_count}"
             self.session_details[session_id] = {"user_session": False, "status": "active"}
             return {"session_id": session_id, "user_session": False}
-        if method == "GET" and path.startswith("/api/sessions/"):
-            detail = self.session_details[path.rsplit("/", 1)[-1]]
-            if isinstance(detail, Exception):
-                raise detail
-            return {"session": copy.deepcopy(detail)}
+        if (method, path) == ("GET", "/api/sessions"):
+            failure = next((item for item in self.session_details.values()
+                            if isinstance(item, Exception)), None)
+            if failure:
+                raise failure
+            return [{"session_id": session_id, **copy.deepcopy(detail)}
+                    for session_id, detail in self.session_details.items()]
         if (method, path) == ("POST", "/api/chat"):
             if self.chat_handler:
                 return self.chat_handler(body)
@@ -145,6 +147,15 @@ class ConnectorBridgeTest(unittest.TestCase):
         self.assertEqual(bridge.sync_once(force=True)["session_id"], "system-3")
         self.assertEqual(self.session_count, 3)
         self.assertFalse(any(path.startswith("/v1/") for _, path, _, _ in self.calls))
+
+    def test_session_verification_uses_compact_collection_not_transcript_detail(self):
+        self.enable()
+        bridge.sync_once()
+        bridge.sync_once(force=True)
+        self.assertTrue(any(path == "/api/sessions" and kwargs.get("expect_list")
+                            for _, path, _, kwargs in self.calls))
+        self.assertFalse(any(path.startswith("/api/sessions/")
+                             for _, path, _, _ in self.calls))
 
     def test_transient_session_verification_keeps_existing_session(self):
         self.enable()

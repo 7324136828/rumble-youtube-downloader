@@ -6,6 +6,9 @@
 .playback-setting-row p { max-width: 680px; margin: 6px 0 0; }
 .playback-setting-row input { width: 20px; height: 20px; flex: 0 0 auto; accent-color: #ff4866; cursor: pointer; }
 .playback-setting-row select { padding: 8px 12px; border: 1px solid #514457; border-radius: 8px; background: #28202f; color: #fff; }
+.playback-volume-control { display: flex; align-items: center; gap: 12px; min-width: 170px; }
+.playback-volume-control input[type='range'] { width: 130px; height: auto; flex: 1 1 auto; }
+.playback-volume-control output { min-width: 3ch; color: #e0d6e8; font-size: 13px; text-align: right; }
 .playback-setting-row input:focus-visible, .playback-setting-row select:focus-visible { outline: 2px solid #ff4866; outline-offset: 3px; }
 .playback-settings > small { color: #a69aad; }
 @media (max-width: 600px) { .playback-settings { padding: 18px; } .playback-setting-row { gap: 16px; } }

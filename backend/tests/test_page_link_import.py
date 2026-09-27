@@ -17,6 +17,9 @@ from app.services import db, page_link_import as links
 
 
 class PageLinkImportTest(unittest.TestCase):
+    def test_page_fetch_limit_is_100_mib(self):
+        self.assertEqual(links.MAX_PAGE_BYTES, 100 * 1024 * 1024)
+
     def test_extracts_relative_external_video_and_nonvideo_links(self):
         html = '''<a href="/video/1"> Video one </a><a href="https://other.test/article#part" title="Article"> </a>
             <a href="mailto:test@example.com">Email</a><a href="/video/1">Duplicate</a>'''
@@ -103,6 +106,19 @@ class PageLinkImportTest(unittest.TestCase):
         options = session_factory.call_args.kwargs["curl_options"]
         self.assertTrue(options)
         self.assertFalse(session.__enter__.return_value.get.call_args.kwargs["allow_redirects"])
+
+    def test_oversized_page_reports_the_100_mib_limit(self):
+        response = MagicMock(status_code=200, headers={"Content-Type": "text/html"})
+        response.iter_content.return_value = [b"1234", b"56"]
+        session = MagicMock()
+        session.__enter__.return_value.get.return_value = response
+        with patch.object(links.custom_website_search, "_resolve_public_address",
+                          return_value=ipaddress.ip_address("203.0.113.10")), \
+                patch.object(links.requests, "Session", return_value=session), \
+                patch.object(links, "MAX_PAGE_BYTES", 5), \
+                self.assertRaisesRegex(links.PageLinkImportError, "100 MiB"):
+            links._request("https://example.com/start")
+        response.close.assert_called_once()
 
 
 class PageLinkApiTest(unittest.TestCase):
