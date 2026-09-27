@@ -14,7 +14,7 @@ const defaultProviders = [
 ];
 const vimeo = { id: 'vimeo.com', name: 'Vimeo', domain: 'vimeo.com', enabled: true };
 const vimeoSuggestion = { ...suggestion, id: 'vimeo.com:123456789', title: 'Vimeo wildlife guide', source_url: 'https://vimeo.com/123456789', connector: 'vimeo.com', verified: false, verification: 'custom_search' };
-let root, settings, models, calls, response, media, watchHistory, failure, modelsFailure, downloadFailure, pending, pendingPatch, respectVerificationSetting;
+let root, settings, models, calls, response, media, watchHistory, failure, modelsFailure, downloadFailure, historyDeleteFailure, pending, pendingPatch, respectVerificationSetting;
 Object.defineProperty(HTMLMediaElement.prototype, 'play', { configurable: true, value() { return Promise.resolve(); } });
 Object.defineProperty(HTMLMediaElement.prototype, 'pause', { configurable: true, value() {} });
 window.fetch = async (path, options = {}) => {
@@ -52,6 +52,11 @@ window.fetch = async (path, options = {}) => {
     } else value = media;
   } else if (url.pathname.startsWith('/api/media/')) value = media.find((item) => item.id === url.pathname.split('/').at(-1));
   else if (url.pathname === '/api/watch-history') value = method === 'GET' ? watchHistory : { recorded: true };
+  else if (url.pathname.startsWith('/api/watch-history/') && method === 'DELETE') {
+    if (historyDeleteFailure) error = 'Could not delete history';
+    else watchHistory = watchHistory.filter((item) => item.video_id !== decodeURIComponent(url.pathname.split('/').at(-1)));
+    value = { removed: !error };
+  }
   else if (url.pathname === '/api/connectors') value = [];
   else throw new Error(`Unexpected test request ${method} ${path}`);
   return { ok: !error, status: error ? 502 : 200, json: async () => error ? { detail: error } : value };
@@ -83,7 +88,7 @@ async function mountPanel(source) {
 async function test(name, body) {
   settings = { enabled: false, model_id: 'my-config', seed_keywords: [], providers: defaultProviders.map((provider) => ({ ...provider })), allow_unverified_links: false, allow_ai_title_lookup: false, revision: 0 };
   models = [{ id: 'my-config', name: 'My config' }, { id: 'second-model', name: 'Second model' }];
-  calls = []; media = []; watchHistory = [{ video_id: 'watched-youtube', ...suggestion, thumbnail_url: '/api/media/watched-youtube/thumbnail', last_watched_at: '2026-09-20T12:00:00Z', position_seconds: 60 }]; failure = modelsFailure = respectVerificationSetting = false; downloadFailure = null; pending = pendingPatch = null; root = null;
+  calls = []; media = []; watchHistory = [{ video_id: 'watched-youtube', ...suggestion, thumbnail_url: '/api/media/watched-youtube/thumbnail', last_watched_at: '2026-09-20T12:00:00Z', position_seconds: 60 }]; failure = modelsFailure = respectVerificationSetting = historyDeleteFailure = false; downloadFailure = null; pending = pendingPatch = null; root = null;
   response = { status: 'ready', items: [suggestion], keywords: ['wildlife'], warnings: [] };
   try { await body(); report.push({ name, passed: true }); }
   catch (error) { report.push({ name, passed: false, message: error.message }); }
@@ -253,6 +258,26 @@ await test('A removed watch-history video can be downloaded again without redire
   equal(location.hash, '#watch-history', 'Queueing from history stays on history');
   assert(button('View download'), 'Queued download is linked from the history row');
 });
+await test('Watch history entries can be deleted without deleting downloaded videos', async () => {
+  watchHistory[0].thumbnail_url = '/api/watch-history/watched-youtube/thumbnail';
+  watchHistory[0].media_id = 'saved-video';
+  await mount('watch-history');
+  equal(find('.watch-history-thumbnail img').getAttribute('src'), watchHistory[0].thumbnail_url, 'Persistent thumbnail rendered');
+  await click(find('[aria-label^="Delete watch history for"]'));
+  equal(host.querySelector('.watch-history-item'), null, 'Deleted history row disappears');
+  equal(calls.filter((call) => call.method === 'DELETE' && call.path === '/api/watch-history/watched-youtube').length, 1, 'Only history delete endpoint requested');
+  equal(calls.filter((call) => call.method === 'DELETE' && call.path.startsWith('/api/media/')).length, 0, 'Library files remain');
+});
+await test('Failed watch history deletion preserves the entry and supports retry', async () => {
+  historyDeleteFailure = true;
+  await mount('watch-history');
+  await click(find('[aria-label^="Delete watch history for"]'));
+  assert(find('.watch-history-item'), 'Failed deletion keeps the row');
+  assert(host.textContent.includes('Could not delete history'), 'Delete failure is explained');
+  historyDeleteFailure = false;
+  await click(find('[aria-label^="Delete watch history for"]'));
+  equal(host.querySelector('.watch-history-item'), null, 'Retry removes the row');
+});
 await test('Unverified model links require an explicit settings toggle', async () => {
   await mount('recommendations');
   const control = find('#recommendation-links-heading').closest('section').querySelector('input[role="switch"]');
@@ -284,20 +309,14 @@ await test('Custom search URLs can be added, edited, and reset without losing pr
   await input(find('#recommendation-provider-domain'), 'vimeo.com');
   await input(find('#recommendation-provider-name'), 'Vimeo');
   await input(find('#recommendation-provider-search-url'), 'https://vimeo.com/search?q={query}');
-  await input(find('#recommendation-provider-thumbnail-domains'), 'i.vimeocdn.com, vimeocdn.com');
   await click(button('Add website'));
   equal(settings.providers.at(-1).search_url, 'https://vimeo.com/search?q={query}', 'New custom search template is submitted');
-  equal(settings.providers.at(-1).thumbnail_domains.join(','), 'i.vimeocdn.com,vimeocdn.com', 'New thumbnail CDN domains are submitted');
+  assert(!('thumbnail_domains' in settings.providers.at(-1)), 'Provider settings do not store CDN domains');
   const row = find('[data-provider="vimeo.com"]');
   await click(row.querySelector('summary'));
-  await click(button('Detect from website'));
-  assert(find('[aria-label="Thumbnail CDN domains for Vimeo"]').value.includes('detected.vimeocdn.com'), 'Detected domain is suggested in the editable field');
-  equal(settings.providers.at(-1).thumbnail_domains.join(','), 'i.vimeocdn.com,vimeocdn.com', 'Detection does not trust or save candidates automatically');
   await input(find('[aria-label="Search URL for Vimeo"]'), 'https://vimeo.com/search?q=');
-  await input(find('[aria-label="Thumbnail CDN domains for Vimeo"]'), 'cdn.vimeo-assets.com');
   await click(row.querySelector('.provider-search-settings button'));
   equal(settings.providers.at(-1).search_url, 'https://vimeo.com/search?q=', 'Existing provider prefix is submitted');
-  equal(settings.providers.at(-1).thumbnail_domains.join(','), 'cdn.vimeo-assets.com', 'Existing thumbnail CDN domains are submitted');
   equal(settings.providers.at(-1).name, 'Vimeo', 'Editing preserves provider name');
   assert(settings.providers.at(-1).enabled, 'Editing preserves provider enabled state');
   equal(settings.providers.length, 3, 'Editing preserves other providers');
@@ -305,6 +324,44 @@ await test('Custom search URLs can be added, edited, and reset without losing pr
   await click(row.querySelector('.provider-search-settings button'));
   equal(settings.providers.at(-1).search_url, null, 'Empty search URL resets to default');
   equal(host.querySelector('[aria-label="Search URL for YouTube"]'), null, 'Builtins keep native search controls unchanged');
+});
+await test('Shared CDN domains persist independently of websites and detection requires saving', async () => {
+  settings.providers = [...defaultProviders, vimeo];
+  settings.thumbnail_domains = ['shared-cdn.com'];
+  await mount('recommendations');
+  equal(find('#thumbnail-domains').value, 'shared-cdn.com', 'Shared saved domains load');
+  await click(button('Detect from website'));
+  assert(find('#thumbnail-domains').value.includes('detected.vimeocdn.com'), 'Detection adds candidates to shared editable list');
+  equal(settings.thumbnail_domains.join(','), 'shared-cdn.com', 'Detection does not automatically persist candidates');
+  await click(button('Save CDN domains'));
+  equal(settings.thumbnail_domains.join(','), 'shared-cdn.com,detected.vimeocdn.com', 'Explicit save persists shared list');
+  const cdnPatch = calls.filter((call) => call.path === '/api/recommendations/settings' && call.method === 'PATCH').at(-1).body;
+  assert(!('providers' in cdnPatch), 'CDN save has no provider association');
+  await click(find('[aria-label="Remove Vimeo"]'));
+  equal(settings.thumbnail_domains.join(','), 'shared-cdn.com,detected.vimeocdn.com', 'Removing a website preserves CDN domains');
+  await navigate('feed');
+  await navigate('recommendations');
+  assert(find('#thumbnail-domains').value.includes('detected.vimeocdn.com'), 'Shared list survives navigation');
+  await input(find('#thumbnail-domains'), 'other-cdn.com, other-cdn.com\nthird-cdn.com');
+  await click(button('Save CDN domains'));
+  equal(settings.thumbnail_domains.join(','), 'other-cdn.com,third-cdn.com', 'Shared list is editable and deduplicated');
+  await input(find('#thumbnail-domains'), '');
+  await click(button('Save CDN domains'));
+  equal(settings.thumbnail_domains.length, 0, 'Shared list can be cleared');
+});
+await test('Shared CDN domains can be saved with no providers and reject excessive lists', async () => {
+  settings.providers = [];
+  settings.thumbnail_domains = [];
+  await mount('recommendations');
+  await input(find('#thumbnail-domains'), 'shared-cdn.com');
+  await click(button('Save CDN domains'));
+  equal(settings.thumbnail_domains.join(','), 'shared-cdn.com', 'No provider needed to save CDN list');
+  equal(settings.providers.length, 0, 'Saving CDN list does not add a provider');
+  const count = calls.filter((call) => call.method === 'PATCH').length;
+  await input(find('#thumbnail-domains'), Array.from({ length: 129 }, (_, index) => `cdn${index}.com`).join('\n'));
+  await click(button('Save CDN domains'));
+  equal(calls.filter((call) => call.method === 'PATCH').length, count, 'Excessive list is rejected before saving');
+  assert(host.textContent.includes('no more than 128'), 'List limit is explained');
 });
 await test('Fallback percentages persist and reject totals other than 100 percent', async () => {
   await mount('recommendations');

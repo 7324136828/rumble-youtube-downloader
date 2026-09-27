@@ -127,6 +127,9 @@
   .recommendation-settings .page-heading > .recommendation-toggle-wrap { align-items: flex-start; }
   .recommendation-settings .error-banner { flex-wrap: wrap; }
   .watch-history-thumbnail { width: 92px; flex-basis: 92px; }
+  .watch-history-item { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; }
+  .watch-history-item > .btn-secondary { grid-column: 2; justify-self: start; }
+  .watch-history-item > .icon-btn { grid-column: 3; grid-row: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .recommendation-switch, .recommendation-switch::after { transition: none; }

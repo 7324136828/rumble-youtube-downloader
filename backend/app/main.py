@@ -73,6 +73,19 @@ def watch_history(limit: int = Query(30, ge=1, le=100)):
     return db.list_watch_history(limit)
 
 
+@app.get("/api/watch-history/{video_id}/thumbnail")
+def watch_history_thumbnail(video_id: str):
+    thumbnail = db.get_watch_history_thumbnail(video_id)
+    if thumbnail is None:
+        raise HTTPException(status_code=404, detail="History thumbnail not found")
+    return Response(content=thumbnail[0], media_type=thumbnail[1])
+
+
+@app.delete("/api/watch-history/{video_id}")
+def delete_watch_history(video_id: str):
+    return db.delete_watch_history(video_id)
+
+
 @app.post("/api/watch-history")
 def record_watch_history(event: WatchEvent):
     try:

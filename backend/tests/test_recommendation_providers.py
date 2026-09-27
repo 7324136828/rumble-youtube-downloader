@@ -80,18 +80,23 @@ class RecommendationProviderTest(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaises(ValidationError):
                 RecommendationProvider(name="Vimeo", domain="vimeo.com", search_url=raw)
 
-    def test_thumbnail_cdn_domains_are_normalized_bounded_and_optional(self):
-        provider = RecommendationProvider(
-            name="Vimeo", domain="vimeo.com",
-            thumbnail_domains=["https://IMG.VimeoCDN.com/", "vimeocdn.com"])
-        self.assertEqual(provider.model_dump()["thumbnail_domains"],
-                         ["img.vimeocdn.com", "vimeocdn.com"])
+    def test_thumbnail_domains_are_not_provider_settings(self):
         self.assertNotIn("thumbnail_domains", website("vimeo.com"))
-        for domains in (["localhost"], ["cdn.example.com", "cdn.example.com"],
-                        [f"cdn{index}.com" for index in range(9)]):
-            with self.subTest(domains=domains), self.assertRaises(ValidationError):
-                RecommendationProvider(name="Vimeo", domain="vimeo.com",
-                                       thumbnail_domains=domains)
+        with self.assertRaises(ValidationError):
+            RecommendationProvider(name="Vimeo", domain="vimeo.com", thumbnail_domains=["vimeocdn.com"])
+
+    def test_shared_cdn_changes_invalidate_cached_custom_search(self):
+        provider = website("other-video-site.com", search_url="https://other-video-site.com/?q={query}")
+        settings = {"thumbnail_domains": ["shared-cdn.com"]}
+        with patch.object(db, "get_recommendation_settings", return_value=settings), \
+                patch.object(providers.custom_website_search, "search_custom", return_value={
+                    "results": [], "warnings": [], "status": "empty"}) as fetch:
+            providers.search_website(provider, "birds", 1)
+            providers.search_website(provider, "birds", 1)
+            self.assertEqual(fetch.call_count, 1)
+            settings["thumbnail_domains"] = []
+            providers.search_website(provider, "birds", 1)
+            self.assertEqual(fetch.call_count, 2)
 
     def test_known_custom_individual_urls_and_disabled_provider_filter(self):
         configured = [website("vimeo.com"), website("bilibili.tv"), website("instagram.com")]

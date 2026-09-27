@@ -122,10 +122,6 @@ def _snapshot(video: dict) -> dict:
 
 def _provider_context(settings, source):
     providers = recommendation_providers.configured_providers(settings.get("providers"))
-    # Thumbnail allowlists are local transport policy and do not help the model
-    # choose or search a website, so keep them out of Connector prompts.
-    providers = [{key: value for key, value in provider.items() if key != "thumbnail_domains"}
-                 for provider in providers]
     return {"providers": providers,
             "selected_source": source}
 

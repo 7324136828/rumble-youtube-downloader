@@ -1,10 +1,13 @@
 """SQLite-backed job registry."""
 import json
 import math
+import mimetypes
 import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import quote
 
 from .. import config
 from ..schemas.recommendation_providers import default_providers
@@ -109,6 +112,7 @@ CREATE TABLE IF NOT EXISTS recommendation_settings (
     allow_ai_title_lookup INTEGER NOT NULL DEFAULT 0,
     fetch_all_search_links INTEGER NOT NULL DEFAULT 0,
     providers TEXT,
+    thumbnail_domains TEXT NOT NULL DEFAULT '[]',
     fallback_weights TEXT,
     revision INTEGER NOT NULL DEFAULT 0
 );
@@ -236,7 +240,16 @@ def init_db() -> None:
     config.JOBS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _LOCK, _connect() as conn:
         conn.executescript(_SCHEMA)
+        history_columns = {row["name"] for row in conn.execute("PRAGMA table_info(watch_history)")}
+        if "thumbnail" not in history_columns:
+            conn.execute("ALTER TABLE watch_history ADD COLUMN thumbnail BLOB")
+        if "thumbnail_type" not in history_columns:
+            conn.execute("ALTER TABLE watch_history ADD COLUMN thumbnail_type TEXT")
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(videos)")}
+        if "thumbnail_path" in columns:
+            for video in conn.execute("SELECT videos.* FROM videos JOIN watch_history"
+                                      " ON watch_history.video_id=videos.id WHERE videos.thumbnail_path IS NOT NULL"):
+                _snapshot_watch_thumbnail(conn, video)
         if "playback_warning" not in columns:
             conn.execute("ALTER TABLE videos ADD COLUMN playback_warning TEXT")
         if "media_kind" not in columns:
@@ -287,6 +300,21 @@ def init_db() -> None:
             conn.execute("ALTER TABLE recommendation_settings ADD COLUMN fetch_all_search_links INTEGER NOT NULL DEFAULT 0")
         if "providers" not in recommendation_columns:
             conn.execute("ALTER TABLE recommendation_settings ADD COLUMN providers TEXT")
+        if "thumbnail_domains" not in recommendation_columns:
+            conn.execute("ALTER TABLE recommendation_settings ADD COLUMN thumbnail_domains TEXT NOT NULL DEFAULT '[]'")
+        # Retire provider-owned CDN lists, preserving their union as shared policy.
+        row = conn.execute("SELECT providers, thumbnail_domains FROM recommendation_settings WHERE id=1").fetchone()
+        if row["providers"] is not None:
+            providers = json.loads(row["providers"])
+            domains = json.loads(row["thumbnail_domains"])
+            migrated = False
+            for provider in providers:
+                if "thumbnail_domains" in provider:
+                    domains.extend(provider.pop("thumbnail_domains"))
+                    migrated = True
+            if migrated:
+                conn.execute("UPDATE recommendation_settings SET providers=?, thumbnail_domains=? WHERE id=1",
+                             (json.dumps(providers), json.dumps(list(dict.fromkeys(domains)))))
         if "fallback_weights" not in recommendation_columns:
             conn.execute("ALTER TABLE recommendation_settings ADD COLUMN fallback_weights TEXT")
         catalog_columns = {row["name"] for row in conn.execute("PRAGMA table_info(recommendation_videos)")}
@@ -862,10 +890,57 @@ def record_watch(video_id: str, position_seconds: float, watched_seconds: float,
             " completed=MAX(watch_history.completed, excluded.completed)",
             (video_id, video["source_url"], video["title"], video["uploader"], video["connector"],
              video["duration"], position_seconds, watched_seconds, _now(), int(completed)))
+        _snapshot_watch_thumbnail(conn, video)
         row = dict(conn.execute("SELECT * FROM watch_history WHERE video_id = ?",
                                 (video_id,)).fetchone())
-    row["completed"] = bool(row["completed"])
-    return row
+    return watch_history_payload(row)
+
+
+def _snapshot_watch_thumbnail(conn, video):
+    """Store a small independent copy so library cleanup cannot erase artwork."""
+    if not video["thumbnail_path"]:
+        return
+    source = Path(video["thumbnail_path"])
+    media_type = mimetypes.guess_type(source.name)[0]
+    if media_type not in {"image/jpeg", "image/png", "image/webp", "image/avif", "image/gif"}:
+        return
+    try:
+        with source.open("rb") as image:
+            thumbnail = image.read(config.MAX_THUMBNAIL_BYTES + 1)
+        if thumbnail and len(thumbnail) <= config.MAX_THUMBNAIL_BYTES:
+            conn.execute("UPDATE watch_history SET thumbnail=?, thumbnail_type=? WHERE video_id=?",
+                         (thumbnail, media_type, video["id"]))
+    except OSError:
+        pass
+
+
+def preserve_watch_thumbnail(video_id):
+    with _LOCK, _connect() as conn:
+        video = conn.execute("SELECT * FROM videos WHERE id=? AND EXISTS"
+                             " (SELECT 1 FROM watch_history WHERE video_id=?)", (video_id, video_id)).fetchone()
+        if video:
+            _snapshot_watch_thumbnail(conn, video)
+
+
+def watch_history_payload(row):
+    item = dict(row)
+    thumbnail = item.pop("thumbnail", None)
+    item.pop("thumbnail_type", None)
+    item["thumbnail_url"] = (f"/api/watch-history/{quote(item['video_id'], safe='')}/thumbnail"
+                             if thumbnail else None)
+    item["completed"] = bool(item["completed"])
+    return item
+
+
+def get_watch_history_thumbnail(video_id):
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT thumbnail,thumbnail_type FROM watch_history WHERE video_id=?", (video_id,)).fetchone()
+    return (row["thumbnail"], row["thumbnail_type"]) if row and row["thumbnail"] else None
+
+
+def delete_watch_history(video_id):
+    with _LOCK, _connect() as conn:
+        return {"removed": conn.execute("DELETE FROM watch_history WHERE video_id=?", (video_id,)).rowcount > 0}
 
 
 def list_watch_history(limit: int = 30) -> list[dict]:
@@ -882,10 +957,10 @@ def list_watch_history(limit: int = 30) -> list[dict]:
             " ORDER BY last_watched_at DESC LIMIT ?", (limit,)).fetchall()
     result = []
     for row in rows:
-        item = dict(row)
+        item = watch_history_payload(row)
         thumbnail_media_id = item.pop("thumbnail_media_id")
-        item["thumbnail_url"] = (f"/api/media/{thumbnail_media_id}/thumbnail"
-                                 if thumbnail_media_id else None)
+        if not item["thumbnail_url"] and thumbnail_media_id:
+            item["thumbnail_url"] = f"/api/media/{thumbnail_media_id}/thumbnail"
         item["completed"] = bool(item["completed"])
         result.append(item)
     return result
@@ -908,6 +983,7 @@ def _settings_payload(row) -> dict:
             "allow_ai_title_lookup": bool(row["allow_ai_title_lookup"]),
             "fetch_all_search_links": bool(row["fetch_all_search_links"]),
             "providers": json.loads(row["providers"]) if row["providers"] is not None else default_providers(),
+            "thumbnail_domains": json.loads(row["thumbnail_domains"]) if "thumbnail_domains" in row.keys() else [],
             "fallback_weights": stored_weights,
             "revision": row["revision"]}
 
@@ -923,7 +999,7 @@ class SettingsConflictError(ValueError):
 
 
 def update_recommendation_settings(changes: dict, expected_revision: int | None = None) -> dict:
-    allowed = {"enabled", "model_id", "seed_keywords", "custom_prompt", "allow_unverified_links", "allow_ai_title_lookup", "fetch_all_search_links", "providers", "fallback_weights"}
+    allowed = {"enabled", "model_id", "seed_keywords", "custom_prompt", "allow_unverified_links", "allow_ai_title_lookup", "fetch_all_search_links", "providers", "thumbnail_domains", "fallback_weights"}
     if changes.keys() - allowed:
         raise ValueError("Unknown recommendation setting")
     values = dict(changes)
@@ -932,6 +1008,9 @@ def update_recommendation_settings(changes: dict, expected_revision: int | None 
     if "providers" in values:
         validated = RecommendationSettingsPatch(providers=values["providers"])
         values["providers"] = json.dumps(validated.model_dump()["providers"])
+    if "thumbnail_domains" in values:
+        validated = RecommendationSettingsPatch(thumbnail_domains=values["thumbnail_domains"])
+        values["thumbnail_domains"] = json.dumps(validated.thumbnail_domains)
     if "fallback_weights" in values:
         validated = RecommendationSettingsPatch(fallback_weights=values["fallback_weights"])
         values["fallback_weights"] = json.dumps(validated.model_dump()["fallback_weights"])
@@ -1149,6 +1228,7 @@ def record_recommendations(items, providers, fallback=False) -> None:
 
 def add_watch_later(videos) -> dict:
     """Validate the whole manual import before atomically saving any membership."""
+    from .manual_video_urls import normalize_video_url
     validated = WatchLaterImport(videos=videos)
     with _LOCK, _connect() as conn:
         # The provider snapshot and all memberships commit as one write transaction,
@@ -1159,16 +1239,19 @@ def add_watch_later(videos) -> dict:
         normalized_items = {}
         for position, video in enumerate(validated.videos, start=1):
             item = video.model_dump(exclude_unset=True)
-            normalized = _catalog_normalized(item, providers)
+            normalized = normalize_video_url(item["source_url"], providers)
             if normalized is None:
-                raise ValueError(f"Video {position} has an invalid URL. Use an individual video link "
-                                 "from a configured website.")
+                raise ValueError(f"Video {position} has an invalid URL. Use a public HTTP or HTTPS video link.")
             if normalized[1] in normalized_items:
                 item = {**normalized_items[normalized[1]][0], **item}
             normalized_items[normalized[1]] = (item, normalized)
         added = updated = 0
         catalog_ids = []
         for item, normalized in normalized_items.values():
+            now = _now()
+            conn.execute("INSERT OR IGNORE INTO recommendation_websites"
+                         " (id,domain,name,enabled,active,created_at,updated_at) VALUES (?,?,?,0,0,?,?)",
+                         (normalized[0], normalized[0], normalized[0], now, now))
             existing = conn.execute("SELECT id FROM recommendation_videos WHERE source_url=?", (normalized[1],)).fetchone()
             catalog_id = (existing["id"] if existing else
                           _catalog_upsert(conn, {"verified": False, "verification": "user_added"}, normalized))
@@ -1236,7 +1319,8 @@ def get_watch_later_by_source_url(source_url) -> dict | None:
             settings = _settings_payload(
                 conn.execute("SELECT * FROM recommendation_settings WHERE id=1").fetchone())
             providers = _catalog_providers(settings["providers"], include_disabled=True)
-            normalized = _catalog_normalized({"source_url": source_url}, providers)
+            from .manual_video_urls import normalize_video_url
+            normalized = normalize_video_url(source_url, providers)
             if normalized is not None:
                 row = conn.execute(
                     "SELECT v.* FROM recommendation_videos v"
@@ -1255,8 +1339,7 @@ def begin_watch_later_title(catalog_id, token, *, force=False) -> dict | None:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT v.* FROM recommendation_videos v JOIN recommendation_video_origins o ON o.video_id=v.id"
-            " JOIN recommendation_websites w ON w.id=v.website_id"
-            " WHERE v.id=? AND o.origin='watch_later' AND w.active=1", (catalog_id,)).fetchone()
+            " WHERE v.id=? AND o.origin='watch_later'", (catalog_id,)).fetchone()
         if (row is None or row["title_fetch_status"] == "pending" or (not force and (
                 (row["title"] or "").strip() or (row["user_title"] or "").strip()))):
             return None

@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .recommendation_providers import RecommendationProvider, validate_provider_list
+from .recommendation_providers import RecommendationProvider, normalize_domain, validate_provider_list
 
 Keyword = Annotated[str, Field(min_length=1, max_length=100)]
 
@@ -36,16 +36,27 @@ class RecommendationSettingsPatch(BaseModel):
     allow_ai_title_lookup: bool | None = None
     fetch_all_search_links: bool | None = None
     providers: list[RecommendationProvider] | None = Field(default=None, max_length=12)
+    thumbnail_domains: list[str] | None = Field(default=None, max_length=128)
     fallback_weights: FallbackWeights | None = None
 
     @model_validator(mode="after")
     def nonnull_preferences(self):
-        for field in ("enabled", "seed_keywords", "custom_prompt", "allow_unverified_links", "allow_ai_title_lookup", "fetch_all_search_links", "providers", "fallback_weights"):
+        for field in ("enabled", "seed_keywords", "custom_prompt", "allow_unverified_links", "allow_ai_title_lookup", "fetch_all_search_links", "providers", "thumbnail_domains", "fallback_weights"):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} cannot be null")
         if self.providers is not None:
             validate_provider_list(self.providers)
         return self
+
+    @field_validator("thumbnail_domains")
+    @classmethod
+    def clean_thumbnail_domains(cls, value):
+        if value is None:
+            return value
+        domains = [normalize_domain(domain) for domain in value]
+        if len(set(domains)) != len(domains):
+            raise ValueError("Thumbnail CDN domains must be unique")
+        return domains
 
     @field_validator("seed_keywords")
     @classmethod

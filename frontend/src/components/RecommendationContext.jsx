@@ -3,7 +3,7 @@ import { getRecommendationSettings, updateRecommendationSettings } from '../serv
 import { DEFAULT_FALLBACK_WEIGHTS, DEFAULT_RECOMMENDATION_PROVIDERS } from '../recommendationUtils';
 import './Recommendations.css';
 
-const DEFAULT_SETTINGS = { enabled: false, model_id: null, seed_keywords: [], custom_prompt: '', providers: DEFAULT_RECOMMENDATION_PROVIDERS, fallback_weights: DEFAULT_FALLBACK_WEIGHTS, allow_unverified_links: false, allow_ai_title_lookup: false, fetch_all_search_links: false, revision: 0 };
+const DEFAULT_SETTINGS = { enabled: false, model_id: null, seed_keywords: [], custom_prompt: '', providers: DEFAULT_RECOMMENDATION_PROVIDERS, thumbnail_domains: [], fallback_weights: DEFAULT_FALLBACK_WEIGHTS, allow_unverified_links: false, allow_ai_title_lookup: false, fetch_all_search_links: false, revision: 0 };
 const RecommendationContext = createContext({
   settings: DEFAULT_SETTINGS, settingsLoaded: true, enabled: false, loading: false, saving: false, error: '', revision: 0,
   updateSettings: async () => DEFAULT_SETTINGS, reloadSettings: () => {}, openSettings: () => {},

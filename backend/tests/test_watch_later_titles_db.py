@@ -131,14 +131,14 @@ class WatchLaterTitleDatabaseTest(unittest.TestCase):
         self.assertEqual(item["user_title"], "My corrected title")
         self.assertEqual(self.row(catalog_id)["title"], "Fetched title")
 
-    def test_disabled_configured_website_is_allowed_removed_website_is_not(self):
+    def test_title_claims_work_with_disabled_or_removed_recommendation_providers(self):
         catalog_id = self.save()["catalog_id"]
         disabled = [{**provider, "enabled": False} for provider in self.providers]
         db.update_recommendation_settings({"providers": disabled})
         self.assertIsNotNone(db.begin_watch_later_title(catalog_id, "disabled-allowed"))
         db.finish_watch_later_title(catalog_id, "disabled-allowed", error="Unavailable")
         db.update_recommendation_settings({"providers": []})
-        self.assertIsNone(db.begin_watch_later_title(catalog_id, "removed-provider"))
+        self.assertIsNotNone(db.begin_watch_later_title(catalog_id, "removed-provider"))
         self.assertIsNotNone(db.get_watch_later_item(catalog_id))
 
     def test_manual_title_imported_while_pending_remains_authoritative(self):

@@ -21,11 +21,21 @@ class VideoRedirectTest(unittest.TestCase):
         self.assertEqual(result, "https://www.youtube.com/watch?v=abcdefghijk")
         self.assertEqual(probe.call_count, 3)
 
-    def test_rejects_redirects_outside_configured_websites_or_to_nonvideos(self):
-        for location in ("https://evil.example/video/1", "http://vimeo.com/456", "https://vimeo.com/search"):
+    def test_rejects_redirects_to_private_hosts_or_insecure_destinations(self):
+        for location in ("https://localhost/video/1", "http://vimeo.com/456", "https://user:secret@vimeo.com/456"):
             with self.subTest(location=location), patch.object(video_redirects, "_probe", return_value=(301, location)), \
                     self.assertRaises(video_redirects.RedirectResolutionError):
                 video_redirects.resolve_video_url("https://vimeo.com/123", PROVIDERS)
+
+    def test_manual_urls_and_redirects_do_not_require_configured_providers(self):
+        with patch.object(video_redirects, "_probe", side_effect=[
+                (302, "https://archive.org/download/movie/movie.mp4"), (200, None)]):
+            self.assertEqual(video_redirects.resolve_video_url("https://vimeo.com/123", []),
+                             "https://archive.org/download/movie/movie.mp4")
+        with patch.object(video_redirects, "_probe") as probe:
+            self.assertEqual(video_redirects.resolve_video_url("http://archive.org/movie.mp4", []),
+                             "http://archive.org/movie.mp4")
+            probe.assert_not_called()
 
     def test_follows_distinct_redirect_url_for_the_same_canonical_video(self):
         url = "https://www.youtube.com/watch?v=abcdefghijk"

@@ -15,7 +15,7 @@ from urllib.parse import urlencode, urlsplit
 
 from curl_cffi import CurlOpt, requests
 
-from . import search
+from . import search, thumbnail_domains
 
 NATIVE_DOMAINS = frozenset({"vimeo.com", "bilibili.tv", "bilibili.com"})
 NATIVE_TIMEOUT = 10
@@ -139,7 +139,7 @@ def _thumbnail(value, domain: str) -> str | None:
             return value
     except ValueError:
         pass
-    return None
+    return thumbnail_domains.safe_cdn_url(value)
 
 
 def _item(provider, video_id, title, *, uploader=None, duration=None, thumbnail=None) -> dict | None:

@@ -5,7 +5,7 @@ import sqlite3
 from urllib.parse import parse_qs, urlencode, unquote, urlsplit, urlunsplit
 
 from ..schemas.recommendation_providers import RecommendationProvider, default_providers
-from . import custom_website_search, native_provider_search, search, search_cache
+from . import custom_website_search, native_provider_search, search, search_cache, thumbnail_domains
 from .native_provider_search import supports_native_search
 
 _NON_VIDEO_PATHS = {
@@ -113,7 +113,7 @@ def _cached_attempt(mode, provider, query, limit, fetch, guard, maximum=24):
         raise search.SearchError(f"Provide a search topic and a limit between 1 and {maximum}.")
     # Preserve case: video IDs and some providers' queries are case-sensitive.
     key = ("recommendation_provider", mode, provider["id"], provider["domain"], provider["name"],
-           provider.get("search_url"), tuple(provider.get("thumbnail_domains", ())), query.strip())
+           provider.get("search_url"), thumbnail_domains.configured_domains(), query.strip())
     response = search_cache.cached_search(key, fetch, guard)
     return {**response, "results": response["results"][:limit]}
 

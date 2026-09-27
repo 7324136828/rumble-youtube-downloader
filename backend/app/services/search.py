@@ -13,6 +13,7 @@ from urllib.parse import quote, urlencode, urljoin, urlsplit
 from curl_cffi import CurlOpt, requests
 
 from ..schemas.search import SearchResponse, SearchResult, SearchSource, SearchWarning
+from . import thumbnail_domains
 
 SEARCH_TIMEOUT = 25
 MAX_PAGE_BYTES = 2 * 1024 * 1024
@@ -54,7 +55,7 @@ def _thumbnail(value, source: str) -> str | None:
             return value
     except ValueError:
         pass
-    return None
+    return thumbnail_domains.safe_cdn_url(value)
 
 
 def _rumble_url(value: str) -> tuple[str, str] | None:

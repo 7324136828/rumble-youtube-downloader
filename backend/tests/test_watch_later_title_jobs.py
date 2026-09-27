@@ -185,16 +185,22 @@ class WatchLaterTitleJobsTest(unittest.TestCase):
         self.assertEqual(self.lookup.call_count, 1)
         self.assertEqual(db.get_watch_later_item(item["catalog_id"])["title"], "New title")
 
-    def test_disabled_provider_allows_requested_lookup_but_removed_provider_does_not(self):
+    def test_title_lookup_remains_available_when_recommendation_providers_are_removed(self):
         db.update_recommendation_settings({"providers": [{**provider, "enabled": False} for provider in default_providers()]})
         item = self.save()["items"][0]
         self.assertEqual(item["title_fetch_status"], "pending")
         db.update_recommendation_settings({"providers": []})
         self.run_job()
-        self.lookup.assert_not_called()
-        self.assertEqual(db.get_watch_later_item(item["catalog_id"])["title_fetch_status"], "unavailable")
+        self.lookup.assert_called_once()
+        self.assertEqual(db.get_watch_later_item(item["catalog_id"])["title_fetch_status"], "ready")
         response = self.client.post(f"/api/recommendations/watch-later/{item['catalog_id']}/title")
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 200)
+
+    def test_unconfigured_video_website_can_fetch_a_title(self):
+        item = self.save([{"source_url": "https://archive.org/details/video"}])["items"][0]
+        self.assertEqual(item["title_fetch_status"], "pending")
+        self.run_job()
+        self.assertEqual(db.get_watch_later_item(item["catalog_id"])["title"], "Fetched video title")
 
     def test_deadline_does_not_commit_late_title(self):
         item = self.save()["items"][0]

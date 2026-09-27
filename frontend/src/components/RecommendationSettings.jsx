@@ -4,6 +4,7 @@ import { RecommendationToggle, useRecommendations } from './RecommendationContex
 import { recommendationProviderIcon } from '../recommendationUtils';
 import FallbackSettings from './FallbackSettings';
 import ProviderSearchSettings from './ProviderSearchSettings';
+import ThumbnailDomainSettings from './ThumbnailDomainSettings';
 import ConnectorIntegrationSettings from './ConnectorIntegrationSettings';
 import Icon from './Icon';
 import './Recommendations.css';
@@ -22,7 +23,6 @@ export default function RecommendationSettings() {
   const [providerDomain, setProviderDomain] = useState('');
   const [providerName, setProviderName] = useState('');
   const [providerSearchUrl, setProviderSearchUrl] = useState('');
-  const [providerThumbnailDomains, setProviderThumbnailDomains] = useState('');
   const [configName, setConfigName] = useState('');
   const [file, setFile] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -92,16 +92,10 @@ export default function RecommendationSettings() {
     }
     const id = domain === 'youtube.com' ? 'youtube' : domain === 'rumble.com' ? 'rumble' : domain;
     const name = providerName.trim() || domain;
-    const thumbnailDomains = [...new Set(providerThumbnailDomains.split(/[,\n]/).map((value) => value.trim()).filter(Boolean))];
-    if (thumbnailDomains.length > 8) {
-      setFormError('Use no more than eight thumbnail CDN domains.');
-      return;
-    }
-    if (await save({ providers: [...settings.providers, { id, name, domain, enabled: true, ...(!['youtube', 'rumble'].includes(id) && providerSearchUrl.trim() ? { search_url: providerSearchUrl.trim() } : {}), ...(thumbnailDomains.length ? { thumbnail_domains: thumbnailDomains } : {}) }] }, `${name} added to recommendation providers.${settings.allow_unverified_links ? '' : ' Enable Show unverified links below if you also want links that the website cannot confirm.'}`)) {
+    if (await save({ providers: [...settings.providers, { id, name, domain, enabled: true, ...(!['youtube', 'rumble'].includes(id) && providerSearchUrl.trim() ? { search_url: providerSearchUrl.trim() } : {}) }] }, `${name} added to recommendation providers.${settings.allow_unverified_links ? '' : ' Enable Show unverified links below if you also want links that the website cannot confirm.'}`)) {
       setProviderDomain('');
       setProviderName('');
       setProviderSearchUrl('');
-      setProviderThumbnailDomains('');
     }
   };
 
@@ -223,8 +217,6 @@ export default function RecommendationSettings() {
           <label className="recommendation-field" htmlFor="recommendation-provider-name">Website name (optional)<input id="recommendation-provider-name" value={providerName} onChange={(event) => setProviderName(event.target.value)} maxLength={60} placeholder="My favorite video website" disabled={loading || saving} /></label>
           <label className="recommendation-field" htmlFor="recommendation-provider-search-url">Search URL (optional)<input id="recommendation-provider-search-url" value={providerSearchUrl} onChange={(event) => setProviderSearchUrl(event.target.value)} placeholder="https://vimeo.com/search?q={query}" maxLength={2048} disabled={loading || saving} /></label>
           <p className="recommendation-help">For a custom website, use its HTTPS search URL with {'{query}'}, or a prefix ending in a query parameter such as ?q=. The URL must belong to that website.</p>
-          <label className="recommendation-field" htmlFor="recommendation-provider-thumbnail-domains">Thumbnail CDN domains (optional)<input id="recommendation-provider-thumbnail-domains" value={providerThumbnailDomains} onChange={(event) => setProviderThumbnailDomains(event.target.value)} placeholder="images.example-cdn.com, img.example.net" maxLength={2048} disabled={loading || saving} /></label>
-          <p className="recommendation-help">Add up to eight public CDN domain names, separated by commas. This allows thumbnails hosted away from the video website. Do not include a protocol or path.</p>
           <p id="recommendation-provider-help" className="recommendation-help">Add up to 12 public websites to include in discovery. Supported websites use their own video search; other websites require a configured search URL. Enable Show unverified links below to include model-suggested links that the website cannot confirm. Downloads depend on website support; recommendations also link to the original video.</p>
           {settings.providers.length >= 12 && <p className="recommendation-help" role="status">You have 12 websites. Remove a custom website to add another.</p>}
           <button className="btn-primary" disabled={loading || saving || !providerDomain.trim() || settings.providers.length >= 12}><Icon name="plus" size={16} />Add website</button>
@@ -261,6 +253,8 @@ export default function RecommendationSettings() {
         </label>
         {!settings.model_id && <p className="recommendation-help" role="status">Choose a Connector model above to enable AI title fallback.</p>}
       </section>
+
+      <ThumbnailDomainSettings domains={settings.thumbnail_domains} providers={settings.providers} disabled={loading || saving} onSave={(domains) => save({ thumbnail_domains: domains }, 'Shared thumbnail CDN domains saved.')} />
 
       <FallbackSettings />
 

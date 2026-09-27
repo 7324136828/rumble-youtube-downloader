@@ -133,12 +133,17 @@ def validate_keywords(value) -> list[str]:
     return result
 
 
-def extract_video_metadata(url: str, guard=lambda: None, providers=None) -> dict:
-    """Use yt-dlp's provider extractor for one already allowlisted video URL."""
+def extract_video_metadata(url: str, guard=lambda: None, providers=None, *, manual=False) -> dict:
+    """Extract one video, enforcing provider selection for recommendation tools."""
     configured = recommendation_providers.configured_providers(providers)
-    normalized = canonical_video_url(url, configured)
+    if manual:
+        from .manual_video_urls import normalize_video_url
+        normalized = normalize_video_url(url, configured)
+    else:
+        normalized = canonical_video_url(url, configured)
     if not normalized:
-        raise ToolError("Use an individual video URL from an enabled recommendation website.")
+        raise ToolError("Use a public video URL." if manual else
+                        "Use an individual video URL from an enabled recommendation website.")
     source, canonical, item_id = normalized
     command = [sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-plugin-dirs",
                "--skip-download", "--no-playlist", "--no-cache-dir", "--socket-timeout", "8",
