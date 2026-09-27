@@ -45,7 +45,7 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
-  const [volume, setVolume] = useState(1);
+  const [volume, setVolume] = useState(preferences.volume);
   const speed = preferences.speed;
   const [visible, setVisible] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
@@ -145,6 +145,11 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
   }, [isMuted]);
 
   useEffect(() => {
+    setVolume(preferences.volume);
+    if (videoRef.current) videoRef.current.volume = preferences.volume;
+  }, [preferences.volume]);
+
+  useEffect(() => {
     if (videoRef.current) {
       videoRef.current.defaultPlaybackRate = speed;
       videoRef.current.playbackRate = speed;
@@ -193,9 +198,13 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
 
   const changeVolume = (value) => {
     const next = Math.max(0, Math.min(1, value));
-    if (videoRef.current) videoRef.current.volume = next;
+    if (videoRef.current) {
+      videoRef.current.volume = next;
+      videoRef.current.muted = next === 0;
+    }
     setVolume(next);
-    changeMuted(next === 0);
+    updatePlaybackPreferences({ volume: next, muted: next === 0 });
+    muteCallback.current?.(next === 0);
   };
 
   const toggleFullscreen = async () => {
@@ -226,7 +235,7 @@ const CustomVideoPlayer = forwardRef(function CustomVideoPlayer({
     const key = event.key.toLowerCase();
     let handled = true;
     if (key === ' ' || key === 'k') togglePlay();
-    else if (key === 'm') changeMuted(!videoRef.current?.muted);
+    else if (key === 'm') { if (videoRef.current?.muted && volume === 0) changeVolume(0.5); else changeMuted(!videoRef.current?.muted); }
     else if (key === 'f' && fullscreenAvailable) toggleFullscreen();
     else if (key === 'arrowleft' || key === 'j') seek((videoRef.current?.currentTime || 0) - (key === 'j' ? 10 : 5));
     else if (key === 'arrowright' || key === 'l') seek((videoRef.current?.currentTime || 0) + (key === 'l' ? 10 : 5));

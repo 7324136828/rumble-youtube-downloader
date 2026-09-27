@@ -317,8 +317,8 @@ The shared `CustomVideoPlayer` provides:
 - Inline playback with a saved preference to start muted or with sound.
 
 Under **Settings → Playback**, choose whether playback starts with sound and set
-your preferred speed. Changing mute or speed in the player updates the same
-browser-local preferences for Watch and Swipe feed. If the browser blocks
+your preferred volume and speed. Changing mute, volume, or speed in the player
+updates the same browser-local preferences for Watch and Swipe feed. If the browser blocks
 autoplay with sound, the player asks you to press Play and preserves your choice.
 
 When the player is focused: Space or K toggles playback, M toggles mute, F toggles

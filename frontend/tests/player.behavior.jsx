@@ -2,6 +2,7 @@
 import { createRoot } from 'react-dom/client';
 import CustomVideoPlayer from '../src/components/CustomVideoPlayer.jsx';
 import PlaybackSettings from '../src/components/PlaybackSettings.jsx';
+import { readPlaybackPreferences } from '../src/playbackPreferences.js';
 
 // Run in a real browser; media APIs are deterministic fakes for race/error coverage.
 // No testing framework or external video/network dependency is needed.
@@ -172,6 +173,50 @@ await test('Volume, mute, and speed update the video and visible controls', asyn
   equal(lastVideo.muted, false, 'Unmute');
   await input(find('select'), 1.5);
   equal(lastVideo.playbackRate, 1.5, 'Playback speed');
+});
+
+await test('Volume is saved across players and mute preserves the chosen level', async () => {
+  await render({ src: '/first.mp4' });
+  await input(find('[aria-label="Volume"]'), 0.35);
+  equal(localStorage.getItem('clipfeed.volume'), '0.35', 'Player saves volume');
+  await click(button('Mute (M)'));
+  equal(localStorage.getItem('clipfeed.volume'), '0.35', 'Muting keeps the level');
+  await render({ key: 'next-player', src: '/second.mp4' });
+  equal(lastVideo.volume, 0.35, 'New player restores volume');
+  equal(lastVideo.muted, true, 'New player restores mute');
+  await click(button('Unmute (M)'));
+  equal(lastVideo.volume, 0.35, 'Unmuting restores the same level');
+  await input(find('[aria-label="Volume"]'), 0);
+  equal(localStorage.getItem('clipfeed.volume'), '0', 'Zero volume is saved');
+  equal(lastVideo.muted, true, 'Zero volume mutes');
+  await event(find('[role="region"]'), 'keydown', 'm');
+  equal(lastVideo.volume, 0.5, 'Mute shortcut restores an audible level from zero');
+  equal(lastVideo.muted, false, 'Mute shortcut unmutes from zero');
+});
+
+await test('Playback settings save volume and update the current player', async () => {
+  await act(async () => root.render(<><PlaybackSettings /><CustomVideoPlayer src="/first.mp4" /></>));
+  lastVideo = find('video');
+  await input(find('#playback-default-volume'), 0.6);
+  equal(localStorage.getItem('clipfeed.volume'), '0.6', 'Setting saves volume');
+  equal(lastVideo.volume, 0.6, 'Mounted player follows the setting');
+  equal(find('.playback-volume-control output').textContent, '60%', 'Setting shows the saved level');
+  await input(find('[aria-label="Volume"]'), 0.25);
+  equal(find('#playback-default-volume').value, '0.25', 'Setting follows the player');
+  await input(find('#playback-default-volume'), 0);
+  equal(lastVideo.muted, true, 'Zero setting mutes the player');
+  await click(find('#playback-start-sound'));
+  equal(lastVideo.volume, 0.5, 'Sound setting restores an audible level');
+  equal(lastVideo.muted, false, 'Sound setting unmutes the player');
+});
+
+await test('Invalid saved volume falls back to full volume', async () => {
+  for (const value of ['', 'not-a-number', '-0.1', '1.1']) {
+    localStorage.setItem('clipfeed.volume', value);
+    equal(readPlaybackPreferences().volume, 1, `Invalid value ${value} is ignored`);
+  }
+  localStorage.setItem('clipfeed.volume', '0');
+  equal(readPlaybackPreferences().volume, 0, 'Zero is a valid saved level');
 });
 
 await test('Blocked sound autoplay keeps the preference and prompts for a user gesture', async () => {

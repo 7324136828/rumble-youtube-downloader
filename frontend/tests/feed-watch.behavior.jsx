@@ -2,6 +2,7 @@
 import { createRoot } from 'react-dom/client';
 import FeedPage from '../src/components/FeedPage.jsx';
 import WatchPage from '../src/components/WatchPage.jsx';
+import { updatePlaybackPreferences } from '../src/playbackPreferences.js';
 
 // Browser integration checks use deterministic API/media responses, with no external videos.
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -159,16 +160,20 @@ await test('Watch preserves the current video after a server deletion failure', 
 });
 await test('Speed and sound carry across already-mounted Feed items and into Watch', async () => {
   localStorage.setItem('clipfeed.muted', '0');
+  localStorage.setItem('clipfeed.volume', '0.4');
   await render(FeedPage);
+  assert([...host.querySelectorAll('video')].every((item) => item.volume === 0.4), 'Feed items restore saved volume');
+  await act(async () => updatePlaybackPreferences({ volume: 0.6 }));
+  assert([...host.querySelectorAll('video')].every((item) => item.volume === 0.6), 'Already-mounted Feed items follow volume changes');
   const select = find('.cf-feed-item:not([inert]) select[aria-label="Playback speed"]');
   Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, '1.5');
   await dispatch(select, new Event('change', { bubbles: true }));
   assert([...host.querySelectorAll('video')].every((item) => item.playbackRate === 1.5), 'Speed synchronizes with the preloaded player');
   await dispatch(find('.cf-feed-scroll'), new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
   const active = find('.cf-feed-item:not([inert]) video');
-  assert(active.playbackRate === 1.5 && !active.muted, 'Next Feed item uses speed and sound');
+  assert(active.playbackRate === 1.5 && !active.muted && active.volume === 0.6, 'Next Feed item uses speed, sound, and volume');
   await render(WatchPage, { videoId: 'two' });
-  assert(find('video').playbackRate === 1.5 && !find('video').muted, 'Watch restores the same settings');
+  assert(find('video').playbackRate === 1.5 && !find('video').muted && find('video').volume === 0.6, 'Watch restores the same settings');
 });
 await test('Watch prefers selected MP3 over compatible MP4 and can return to video', async () => {
   videos[0] = { ...videos[0], media_kind: 'video', playback_format: 'mp3', playback_preference_explicit: true, thumbnail_url: '/cover.jpg', conversions: {
