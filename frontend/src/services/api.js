@@ -249,6 +249,12 @@ export function removeWatchLater(catalogId) {
   return request(`/recommendations/watch-later/${encodeURIComponent(catalogId)}`, { method: 'DELETE' });
 }
 
+export function updateWatchLaterRetention(catalogId, retentionDays, signal) {
+  return request(`/recommendations/watch-later/${encodeURIComponent(catalogId)}/retention`, {
+    method: 'PATCH', body: JSON.stringify({ retention_days: retentionDays }), signal,
+  });
+}
+
 export function getWatchLaterLinks({ limit = 200, offset = 0 } = {}, signal) {
   return request(`/recommendations/watch-later/links?${new URLSearchParams({ limit: String(limit), offset: String(offset) })}`, { signal });
 }

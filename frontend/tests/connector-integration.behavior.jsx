@@ -160,17 +160,22 @@ await test('Large video metadata stays within impression field and byte limits',
   }
 });
 
-await test('Stale responses cannot log impressions after the source changes', async () => {
-  let finishOld;
+await test('Website selection logs new recommendations only after explicit refresh', async () => {
+  let finishInitial;
   recommendationResponse = (body) => body.source === 'all'
-    ? new Promise((resolve) => { finishOld = resolve; })
+    ? new Promise((resolve) => { finishInitial = resolve; })
     : Promise.resolve({ status: 'ready', items: [{ ...suggestion, title: 'Current source result' }] });
   await mountPanel();
   await input(find('select[aria-label="Recommendation websites"]'), 'youtube');
-  equal(impressions().length, 1, 'New source impression recorded');
-  await act(async () => finishOld({ status: 'ready', items: [{ ...suggestion, title: 'Stale result' }] }));
-  equal(impressions().length, 1, 'Stale response was not recorded');
-  equal(impressions()[0].body.items[0].title, 'Current source result', 'Only current result sent');
+  equal(posts('/api/recommendations').length, 1, 'Website selection does not fetch a new playlist');
+  equal(impressions().length, 0, 'Website selection does not log undisplayed results');
+  await act(async () => finishInitial({ status: 'ready', items: [{ ...suggestion, title: 'Initial playlist result' }] }));
+  equal(impressions().length, 1, 'Initial displayed playlist is logged');
+  equal(impressions()[0].body.items[0].title, 'Initial playlist result', 'The original result stays current until refresh');
+  await click(find('button[aria-label="Refresh recommendations"]'));
+  equal(posts('/api/recommendations').length, 2, 'Manual refresh makes one new request');
+  equal(impressions().length, 2, 'Manually refreshed playlist is logged separately');
+  equal(impressions()[1].body.items[0].title, 'Current source result', 'Refreshed source result is logged after display');
 });
 
 await test('Turning recommendations off prevents pending responses from being logged', async () => {

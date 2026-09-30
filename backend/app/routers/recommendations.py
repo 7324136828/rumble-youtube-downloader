@@ -13,6 +13,7 @@ from ..services import (connector_client, custom_website_search, db, recommendat
                         page_link_import, recommendation_providers, video_redirects, watch_later_thumbnails,
                         watch_later_titles)
 from .. import config
+from ..schemas.media import VideoRetentionPatch
 
 router = APIRouter(prefix="/api/recommendations", tags=["recommendations"])
 _LOG = logging.getLogger(__name__)
@@ -87,6 +88,14 @@ def fetch_watch_later_title(catalog_id: int = Path(ge=1, le=2 ** 63 - 1), force:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/watch-later/{catalog_id}/retention")
+def set_watch_later_retention(body: VideoRetentionPatch, catalog_id: int = Path(ge=1, le=2 ** 63 - 1)):
+    item = db.update_watch_later_retention(catalog_id, body.retention_days)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Saved video not found.")
+    return item
 
 
 @router.get("/watch-later/{catalog_id}/thumbnail")

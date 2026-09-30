@@ -131,7 +131,7 @@ class WatchHistoryTest(unittest.TestCase):
             "enabled": False, "model_id": None, "seed_keywords": [], "custom_prompt": "",
             "allow_unverified_links": False, "allow_ai_title_lookup": False,
             "fetch_all_search_links": False, "providers": default_providers(),
-            "thumbnail_domains": [], "fallback_weights": {"custom_search": 50, "public_search": 0, "watch_later": 50}, "revision": 0})
+            "thumbnail_domains": [], "watch_later_retention_days": 20, "fallback_weights": {"custom_search": 50, "public_search": 0, "watch_later": 50}, "revision": 0})
         saved = db.update_recommendation_settings({"model_id": "my-recommender", "seed_keywords": ["wildlife"], "enabled": True})
         self.assertEqual(saved["revision"], 1)
         db.init_db()

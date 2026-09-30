@@ -46,7 +46,10 @@ def shutdown():
 
 
 def remove_local(catalog_id):
-    value = db.get_watch_later_thumbnail(catalog_id)
+    remove_path(db.get_watch_later_thumbnail(catalog_id))
+
+
+def remove_path(value):
     if not value:
         return
     path = Path(value).resolve()
@@ -55,7 +58,7 @@ def remove_local(catalog_id):
         try:
             path.unlink(missing_ok=True)
         except OSError:
-            _LOG.info("Could not remove Watch later thumbnail for catalog item %s.", catalog_id)
+            _LOG.info("Could not remove a Watch later thumbnail.")
 
 
 def _run(key, token, item):

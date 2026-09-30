@@ -152,9 +152,9 @@ Open **Watch later** in the sidebar to paste one video URL per line. For one URL
 you can also supply a title and description. The page accepts up to 200 videos at
 once, supports filtering saved entries by website, and lets you remove entries.
 **Watch later** buttons on search results and recommendations save individual
-links without starting downloads. Saving remains available with AI off and for
-configured websites that are currently disabled. Enable a website before its
-saved videos can appear in recommendations.
+links without starting downloads. Saving remains available with AI off and accepts
+video links from public websites without configuring a recommendation provider.
+Recommendation candidates still follow the configured website settings.
 
 Leave the optional title blank to request it from the source website in the
 background. Saving returns promptly; the visible list shows **Fetching title**
@@ -193,6 +193,17 @@ removed automatically. Exact and canonical-equivalent URLs are matched, so provi
 short links and normal watch URLs remove the same saved item. Existing ready downloads
 are reconciled at backend startup. Failed and cancelled downloads remain in Watch later.
 
+Saved videos expire after **20 days** by default. **Expiration settings** above
+Saved videos changes the persistent default for current and future entries without
+an individual choice. Each card's **Expiration** button sets its own override.
+Use 1–3650 days or any negative whole number for indefinite storage; zero is invalid.
+The countdown starts at the first save and does not restart when the same entry is
+saved again. Entries already present on upgrade receive a fresh countdown, which
+subsequent restarts preserve. Cleanup runs hourly, at startup, and when saved entries
+are read. Expiration removes saved membership and temporary thumbnails, retires
+pending metadata jobs, and preserves downloaded media, watch history, and any
+independent discovery origins. Downloads keep their separate expiration policy.
+
 **Save every link from a page** accepts one public page URL. The backend follows at
 most five separately checked HTTPS redirects and reads at most 100 MiB of HTML without
 cookies, credentials, environment proxies, or scripts. It returns up to 500 unique
@@ -213,10 +224,10 @@ and are never supplied to the recommendation model or download queue automatical
 Before the database transaction, the backend checks each submitted URL and manually
 follows at most five 301, 302, 303, 307, or 308 responses. Every hop is separately
 DNS-checked, uses a pinned public address, disables cookies/proxies/automatic
-redirects, and must stay on a configured public HTTPS video website. The final URL
+redirects, and must stay on public HTTPS websites. The final URL
 is canonicalized and deduplicated before SQLite is written. Loops, excessive hops,
-invalid locations, non-video destinations, and redirects to unrelated sites are
-rejected. If the initial redirect probe is temporarily unavailable, the validated
+invalid locations, and non-public destinations are rejected. Public HTTP inputs
+are saved without redirect probing. If the initial redirect probe is temporarily unavailable, the validated
 canonical input URL is retained and normal background title lookup can be retried.
 
 The backend runs at most two title lookups at once with a bounded queue of 256
@@ -224,8 +235,7 @@ pending jobs. A full queue or unavailable website does not prevent a link from
 being saved; its title status becomes unavailable and you can retry later.
 
 The **Import a video list** section accepts a JSON array or an object with a `videos`
-array. A file can contain up to 200 videos and be at most 1 MiB. Add `vimeo.com`
-under Recommendation websites before importing this example:
+array. A file can contain up to 200 videos and be at most 1 MiB:
 
 ```json
 {
@@ -242,9 +252,12 @@ under Recommendation websites before importing this example:
 }
 ```
 
-Each entry requires `source_url`; `title` and `description` are optional. The API
+Each entry requires `source_url`; `title`, `description`, and `retention_days` are
+optional. Supplied `retention_days` sets an individual expiration choice: 1–3650
+days or a negative whole number to keep the entry indefinitely. Omit it to use the
+persistent default (20 days initially), or preserve an existing entry's choice. The API
 accepts URLs up to 2,048 characters, titles up to 500, and descriptions up to
-10,000. URLs must identify individual videos on configured websites. Canonical
+10,000. URLs must be public HTTP or HTTPS video links. Canonical
 URLs are deduplicated, and supplied titles/descriptions are stored as your
 overrides without replacing independently discovered metadata. New DIY entries
 start unverified. Removing an entry clears its Watch later membership and your
@@ -483,7 +496,8 @@ Content-Type: application/json
 | POST | `/api/recommendations/tools/{name}` | Invoke a search tool using `{arguments}` |
 | POST | `/api/recommendations` | Generate `{context, source, video_id, exclude_urls, limit, refresh}` |
 | GET | `/api/recommendations/watch-later?source=all&limit=200&offset=0` | List saved entries as `{items, total, revision}`; `limit` is 1–200 |
-| POST | `/api/recommendations/watch-later` | Save/import `{videos:[{source_url,title?,description?}], fetch_titles?:true, resolve_redirects?:true}` (1–200 entries); return `{items, added, updated, revision}` |
+| POST | `/api/recommendations/watch-later` | Save/import `{videos:[{source_url,title?,description?,retention_days?}], fetch_titles?:true, resolve_redirects?:true}` (1–200 entries); return `{items, added, updated, revision}` |
+| PATCH | `/api/recommendations/watch-later/{catalog_id}/retention` | Set an entry's `{retention_days}` to 1–3650 or a negative integer for indefinite storage; return the updated saved item, or 404 if no longer saved |
 | POST | `/api/recommendations/watch-later/{catalog_id}/title` | Queue/retry a missing title; `?force=true` refreshes an existing title; return `{item, queued}` (200), or 404 if no longer saved |
 | GET | `/api/recommendations/watch-later/{catalog_id}/thumbnail` | Serve the locally downloaded thumbnail for a saved video |
 | DELETE | `/api/recommendations/watch-later/{catalog_id}` | Remove Watch later membership; return `{removed, revision}` |
@@ -519,6 +533,11 @@ to `fetch_titles: true`; `false` stores the provided metadata without queueing a
 title lookup. `resolve_redirects` also defaults to `true` and resolves the final
 canonical configured-video URL before insertion. Successful title changes advance the recommendation revision, and
 the Watch later page refreshes shared settings when it observes a changed title.
+
+Saved items also include `saved_at`, `retention_started_at`, `retention_days`,
+`retention_override`, and `expires_at`. Indefinite entries have null `retention_days`
+and `expires_at`. The persistent default is `watch_later_retention_days` in
+`GET`/`PATCH /api/recommendations/settings`: initially 20, or -1 for indefinite storage.
 
 `providers` is a replacement list of `{id, name, domain, enabled, search_url?}` objects. Domains
 are normalized to lowercase without `www.`; homepage URLs are also accepted.

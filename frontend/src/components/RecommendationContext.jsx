@@ -1,13 +1,15 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { getRecommendationSettings, updateRecommendationSettings } from '../services/api';
+import { getRecommendations, getRecommendationSettings, updateRecommendationSettings } from '../services/api';
 import { DEFAULT_FALLBACK_WEIGHTS, DEFAULT_RECOMMENDATION_PROVIDERS } from '../recommendationUtils';
 import './Recommendations.css';
 
-const DEFAULT_SETTINGS = { enabled: false, model_id: null, seed_keywords: [], custom_prompt: '', providers: DEFAULT_RECOMMENDATION_PROVIDERS, thumbnail_domains: [], fallback_weights: DEFAULT_FALLBACK_WEIGHTS, allow_unverified_links: false, allow_ai_title_lookup: false, fetch_all_search_links: false, revision: 0 };
+const DEFAULT_SETTINGS = { enabled: false, model_id: null, seed_keywords: [], custom_prompt: '', providers: DEFAULT_RECOMMENDATION_PROVIDERS, thumbnail_domains: [], watch_later_retention_days: 20, fallback_weights: DEFAULT_FALLBACK_WEIGHTS, allow_unverified_links: false, allow_ai_title_lookup: false, fetch_all_search_links: false, revision: 0 };
+const EMPTY_PLAYLIST = { attempted: false, loading: false, data: null, error: '', request: null, version: 0 };
 const RecommendationContext = createContext({
   settings: DEFAULT_SETTINGS, settingsLoaded: true, enabled: false, loading: false, saving: false, error: '', revision: 0,
   updateSettings: async () => DEFAULT_SETTINGS, reloadSettings: () => {}, openSettings: () => {},
   savedWatchLaterUrls: new Set(), noteWatchLaterSaved: () => {}, noteWatchLaterRemoved: () => {},
+  playlist: EMPTY_PLAYLIST, loadPlaylist: () => {}, notePlaylistMedia: () => {}, recommendationSource: 'all', setRecommendationSource: () => {},
 });
 
 export function useRecommendations() {
@@ -23,14 +25,59 @@ export function RecommendationProvider({ children, navigate }) {
   const [revision, setRevision] = useState(0);
   const [reload, setReload] = useState(0);
   const [savedWatchLaterUrls, setSavedWatchLaterUrls] = useState(() => new Set());
+  const [playlist, setPlaylist] = useState(EMPTY_PLAYLIST);
+  const [recommendationSource, setRecommendationSource] = useState('all');
+  const playlistRef = useRef(EMPTY_PLAYLIST);
+  const playlistRequest = useRef(null);
   const mounted = useRef(false);
   const mutation = useRef(0);
   const queue = useRef(Promise.resolve());
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => { mounted.current = false; playlistRequest.current?.abort(); };
   }, []);
+
+  const setPlaylistSnapshot = useCallback((next) => {
+    playlistRef.current = next;
+    setPlaylist(next);
+  }, []);
+
+  const loadPlaylist = useCallback(async (parameters, refresh = false) => {
+    // The first eligible panel loads once. Only an explicit refresh replaces
+    // this shared playlist, including after navigation or settings changes.
+    if (!refresh && playlistRef.current.attempted) return;
+    playlistRequest.current?.abort();
+    const controller = new AbortController();
+    playlistRequest.current = controller;
+    setPlaylistSnapshot({ ...playlistRef.current, attempted: true, loading: true, error: '' });
+    try {
+      const data = await getRecommendations({ ...parameters, refresh }, controller.signal);
+      if (mounted.current && !controller.signal.aborted && playlistRequest.current === controller) {
+        setPlaylistSnapshot({ attempted: true, loading: false, data, error: '', request: parameters,
+          version: playlistRef.current.version + 1 });
+      }
+    } catch (error) {
+      if (mounted.current && !controller.signal.aborted && playlistRequest.current === controller) {
+        setPlaylistSnapshot({ ...playlistRef.current, loading: false,
+          error: error.message || 'Recommendations are temporarily unavailable.' });
+      }
+    }
+  }, [setPlaylistSnapshot]);
+
+  const notePlaylistMedia = useCallback((sourceUrl, media) => {
+    const current = playlistRef.current;
+    if (!current.data?.items?.some((video) => video.source_url === sourceUrl && video.media_id !== media.id)) return;
+    setPlaylistSnapshot({ ...current, data: { ...current.data, items: current.data.items.map((video) =>
+      video.source_url === sourceUrl ? { ...video, media_id: media.id } : video) } });
+  }, [setPlaylistSnapshot]);
+
+  useEffect(() => {
+    if (!settings.enabled) {
+      playlistRequest.current?.abort();
+      if (playlistRef.current.loading) setPlaylistSnapshot({ ...playlistRef.current, loading: false });
+    }
+  }, [settings.enabled, setPlaylistSnapshot]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -53,7 +100,7 @@ export function RecommendationProvider({ children, navigate }) {
 
   const updateSettings = useCallback((patch) => {
     const version = ++mutation.current;
-    // Invalidate displayed playlists at once, before a slow settings request.
+    // Other consumers can observe settings changes without replacing the playlist.
     setRevision((value) => value + 1);
     setSaving(true);
     setError('');
@@ -84,9 +131,10 @@ export function RecommendationProvider({ children, navigate }) {
   const noteWatchLaterSaved = useCallback((urls) => setSavedWatchLaterUrls((previous) => new Set([...previous, ...urls])), []);
   const noteWatchLaterRemoved = useCallback((url) => setSavedWatchLaterUrls((previous) => { const next = new Set(previous); next.delete(url); return next; }), []);
   return <RecommendationContext.Provider value={{
-    settings, settingsLoaded, enabled: Boolean(settings.enabled) && !loading && !saving,
+    settings, settingsLoaded, enabled: Boolean(settings.enabled) && settingsLoaded,
     loading, saving, error, revision, updateSettings, reloadSettings, openSettings,
     savedWatchLaterUrls, noteWatchLaterSaved, noteWatchLaterRemoved,
+    playlist, loadPlaylist, notePlaylistMedia, recommendationSource, setRecommendationSource,
   }}>{children}</RecommendationContext.Provider>;
 }
 

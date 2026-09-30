@@ -163,9 +163,14 @@ Open **Search details** in the recommendation panel to see which websites found
 videos, returned no matches, or could not be searched. Temporary failures can use
 recent successful search results. A website's configured search page may still
 return no usable videos.
+The first recommendation panel loads a playlist once. Those picks stay the same
+as you save to Watch later, navigate between pages, watch another video, or update
+settings. Click **Refresh recommendations** to replace them. Failed refreshes keep
+the previous picks available, and retries require an explicit click.
 Recommendations default to **All enabled websites**, regardless of the current
-video's source. Use the recommendation panel's selector for a specific website;
-the **Watch history** list filter does not restrict recommendation sources.
+video's source. Choose a website in the recommendation panel, then click Refresh
+to apply that selection. The **Watch history** list filter does not restrict
+recommendation sources.
 
 Watch history keeps a separate thumbnail copy when library videos are removed or
 expire. Use the trash button on a history entry to remove its history and saved
@@ -204,6 +209,17 @@ opens a review window without saving anything first. **Select videos** offers
 checkboxes for recognized configured-video links. **Text view** lets you copy all
 links, edit them in another application, and paste up to 200 video URLs back for one
 bulk Watch later save. The normal title and thumbnail jobs run for those saved videos.
+
+Watch later entries expire after **20 days** by default. Use **Expiration settings**
+above Saved videos to change the persistent default, or **Expiration** on a saved
+card to set an individual choice. Enter 1–3650 days, or a negative number such as
+**-1** to keep entries indefinitely. The default applies to current and future
+entries without an individual choice. Time runs from the first save; saving the
+same entry again does not restart it. Entries present when upgrading get a fresh
+countdown. Cleanup runs hourly, at startup, and when saved entries are read; it
+removes expired entries and temporary thumbnails while preserving downloaded files
+and watch history. Downloads have their own expiration settings.
+
 Non-visible script/style text, code-shaped labels, generic labels such as **Video**,
 and quality/caption badges such as **1440pCC** are discarded instead of being saved
 as titles. Descriptive link labels, image alt text, or a later title link for the
@@ -552,7 +568,8 @@ job output directories, and database connections close after each operation.
 | POST | `/api/recommendations/tools/{name}` | Invoke a search tool with `{arguments}` when enabled |
 | POST | `/api/recommendations` | Generate an ordered playlist for Feed, Watch, or History, optionally filtered by `source` |
 | GET | `/api/recommendations/watch-later?source=all&limit=200&offset=0` | List saved links with pagination as `{items, total, revision}` |
-| POST | `/api/recommendations/watch-later` | Save/import `{videos:[{source_url,title?,description?}], fetch_titles?:true, resolve_redirects?:true}` (1–200); return `{items, added, updated, revision}` |
+| POST | `/api/recommendations/watch-later` | Save/import `{videos:[{source_url,title?,description?,retention_days?}], fetch_titles?:true, resolve_redirects?:true}` (1–200); return `{items, added, updated, revision}` |
+| PATCH | `/api/recommendations/watch-later/{catalog_id}/retention` | Set an entry's `{retention_days}` to 1–3650 or a negative integer for indefinite storage; return the updated saved item |
 | POST | `/api/recommendations/watch-later/{catalog_id}/title` | Queue/retry a missing title; `?force=true` refreshes an existing title; return `{item, queued}` |
 | DELETE | `/api/recommendations/watch-later/{catalog_id}` | Remove Watch later membership; return `{removed, revision}` |
 | POST | `/api/resolve` | Route `{urls}` to connectors; does not check download availability |

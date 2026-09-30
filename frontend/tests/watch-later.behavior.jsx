@@ -7,7 +7,13 @@ const host = document.getElementById('test-root');
 const report = [];
 const providers = [{ id: 'youtube', name: 'YouTube', domain: 'youtube.com', enabled: true }, { id: 'vimeo.com', name: 'Vimeo films', domain: 'vimeo.com', enabled: true }];
 const video = { id: 'vimeo.com:123', connector: 'vimeo.com', title: 'A film for later', description: 'Coastal birds.', source_url: 'https://vimeo.com/123', verified: false, origins: ['custom_search'], user_added: false };
-let root, settings, catalog, pageLinks, calls, failSave, failLoad, failRemove, failTitle, pageSize, fallback, holdList, libraryMedia;
+let root, settings, catalog, pageLinks, calls, failSave, failLoad, failRemove, failTitle, failRetention, pageSize, fallback, holdList, libraryMedia;
+const retained = (item, days = 20, override = false) => {
+  const started = item.retention_started_at || item.saved_at || new Date().toISOString();
+  return { ...item, saved_at: item.saved_at || started, retention_started_at: started,
+    retention_days: days > 0 ? days : null, retention_override: override,
+    expires_at: days > 0 ? new Date(new Date(started).getTime() + days * 86400000).toISOString() : null };
+};
 const pollTimers = new Map();
 const nativeSetTimeout = window.setTimeout.bind(window);
 const nativeClearTimeout = window.clearTimeout.bind(window);
@@ -23,7 +29,17 @@ window.fetch = async (path, options = {}) => {
   const body = options.body ? JSON.parse(options.body) : null;
   calls.push({ path: url.pathname, method, body, query: Object.fromEntries(url.searchParams), signal: options.signal });
   let value, error;
-  if (url.pathname === '/api/recommendations/settings') value = settings;
+  if (url.pathname === '/api/recommendations/settings') {
+    if (method === 'PATCH') {
+      settings = { ...settings, ...body, revision: settings.revision + 1 };
+      if (body.watch_later_retention_days !== undefined) {
+        const days = body.watch_later_retention_days < 0 ? -1 : body.watch_later_retention_days;
+        settings.watch_later_retention_days = days;
+        catalog = catalog.map((item) => item.retention_override ? item : retained(item, days));
+      }
+    }
+    value = settings;
+  }
   else if (url.pathname === '/api/recommendations/models') value = { models: [{ id: 'test-model', name: 'Test model' }] };
   else if (url.pathname === '/api/recommendations/watch-later') {
     if (method === 'GET') {
@@ -40,7 +56,7 @@ window.fetch = async (path, options = {}) => {
       if (!error) for (const entry of body.videos) {
         const existing = catalog.find((item) => item.source_url === entry.source_url);
         const title = entry.title || existing?.title || entry.source_url;
-        const item = { ...existing, ...entry, catalog_id: existing?.catalog_id || catalog.length + 1, connector: entry.source_url.includes('vimeo') ? 'vimeo.com' : entry.source_url.includes('youtube') ? 'youtube' : new URL(entry.source_url).hostname, title, origins: ['watch_later'], user_added: true, verified: false, title_fetch_status: title === entry.source_url && body.fetch_titles !== false ? 'pending' : 'idle', title_fetch_error: null };
+        const item = retained({ ...existing, ...entry, catalog_id: existing?.catalog_id || catalog.length + 1, connector: entry.source_url.includes('vimeo') ? 'vimeo.com' : entry.source_url.includes('youtube') ? 'youtube' : new URL(entry.source_url).hostname, title, origins: ['watch_later'], user_added: true, verified: false, title_fetch_status: title === entry.source_url && body.fetch_titles !== false ? 'pending' : 'idle', title_fetch_error: null }, entry.retention_days !== undefined ? entry.retention_days : existing?.retention_days !== undefined ? existing.retention_days : settings.watch_later_retention_days, entry.retention_days !== undefined || Boolean(existing?.retention_override));
         if (existing) { catalog = catalog.map((old) => old.catalog_id === existing.catalog_id ? item : old); updated++; }
         else { catalog.push(item); added++; }
         saved.push(item);
@@ -65,6 +81,11 @@ window.fetch = async (path, options = {}) => {
   } else if (/\/watch-later\/links\/\d+$/.test(url.pathname)) {
     pageLinks = pageLinks.filter((item) => item.id !== Number(url.pathname.split('/').at(-1)));
     value = { removed: true };
+  } else if (/\/watch-later\/\d+\/retention$/.test(url.pathname)) {
+    const id = Number(url.pathname.split('/').at(-2));
+    if (failRetention) error = 'Could not save Watch later expiration';
+    else { catalog = catalog.map((item) => item.catalog_id === id ? retained(item, body.retention_days, true) : item); settings.revision++; }
+    value = catalog.find((item) => item.catalog_id === id);
   } else if (/\/watch-later\/\d+\/title$/.test(url.pathname)) {
     const id = Number(url.pathname.split('/').at(-2));
     if (failTitle) error = 'Title lookup is temporarily unavailable';
@@ -103,6 +124,10 @@ const linkWrites = () => calls.filter((call) => call.path === '/api/recommendati
 const linkPreviews = () => calls.filter((call) => call.path === '/api/recommendations/watch-later/preview-links');
 const titleWrites = () => calls.filter((call) => /\/watch-later\/\d+\/title$/.test(call.path));
 const listReads = () => calls.filter((call) => call.path === '/api/recommendations/watch-later' && call.method === 'GET');
+const retentionWrites = () => calls.filter((call) => /\/watch-later\/\d+\/retention$/.test(call.path));
+const retentionDialog = () => { const dialog = document.querySelector('[role="dialog"]'); assert(dialog, 'Expiration dialog is open'); return dialog; };
+const retentionInput = () => retentionDialog().querySelector('input');
+const retentionButton = (text) => { const item = [...retentionDialog().querySelectorAll('button')].find((element) => element.textContent.trim() === text); assert(item, `Missing dialog button ${text}`); return item; };
 async function poll() {
   const callbacks = [...pollTimers.values()]; pollTimers.clear();
   assert(callbacks.length, 'Pending titles schedule a refresh');
@@ -122,8 +147,8 @@ async function upload(value) {
   for (let i = 0; i < 20; i++) { await act(async () => new Promise((done) => setTimeout(done, 5))); if (host.querySelector('.success-banner, [role="alert"]')) break; }
 }
 async function test(name, body, setup = () => {}) {
-  settings = { enabled: false, model_id: null, allow_unverified_links: false, allow_ai_title_lookup: false, providers: providers.map((provider) => ({ ...provider })), revision: 0 };
-  catalog = []; pageLinks = []; calls = []; failSave = failLoad = failRemove = failTitle = fallback = false; pageSize = 200; holdList = null; libraryMedia = null; pollTimers.clear();
+  settings = { enabled: false, model_id: null, allow_unverified_links: false, allow_ai_title_lookup: false, providers: providers.map((provider) => ({ ...provider })), watch_later_retention_days: 20, revision: 0 };
+  catalog = []; pageLinks = []; calls = []; failSave = failLoad = failRemove = failTitle = failRetention = fallback = false; pageSize = 200; holdList = null; libraryMedia = null; pollTimers.clear();
   history.replaceState(null, '', '#watch-later'); setup();
   root = createRoot(host);
   try { await act(async () => root.render(<App />)); await body(); report.push({ name, passed: true }); }
@@ -282,8 +307,12 @@ await test('Manual search can save for later without downloading and keeps its s
 await test('Recommendations show fallback origins and save for later without downloading', async () => {
   assert(find('.recommendation-fallback-note').textContent.includes('chosen at random'), 'Fallback explanation is visible');
   assert(find('.recommendation-item').textContent.includes('Website search'), 'Candidate origin is shown');
+  const card = find('.recommendation-item');
+  const count = calls.filter((call) => call.path === '/api/recommendations').length;
   await click(find('[aria-label="Watch later: A film for later"]'));
-  assert(find('.recommendation-item').textContent.includes('Saved by you'), 'Curated origin appears after refresh');
+  equal(find('.recommendation-item'), card, 'Saving preserves the existing recommendation card');
+  equal(calls.filter((call) => call.path === '/api/recommendations').length, count, 'Saving does not refresh recommendations');
+  assert(find('.recommendation-item').textContent.includes('Saved by you'), 'Curated origin appears immediately without refreshing');
   assert(find('.recommendation-item').textContent.includes('Unverified link'), 'Saving does not promote verification');
   equal(downloads().length, 0, 'Saving recommendation does not download');
 }, () => { settings.enabled = true; settings.model_id = 'test-model'; fallback = true; history.replaceState(null, '', '#feed'); });
@@ -300,7 +329,7 @@ await test('Untitled saves display background progress then refresh the title on
   equal(find('.watch-later-item'), card, 'Polling keeps the existing card mounted');
   equal(find('.watch-later-item h3').textContent, 'Fetched coastal film', 'Fetched title appears without reload');
   assert(card.textContent.includes('Saved by you') && card.textContent.includes('Unverified link'), 'A fetched title does not claim verification');
-  equal(calls.filter((call) => call.path === '/api/recommendations/settings').length, settingsCount + 1, 'Title change invalidates recommendations once');
+  equal(calls.filter((call) => call.path === '/api/recommendations/settings').length, settingsCount + 1, 'Completed metadata lookup reloads settings once');
   equal(pollTimers.size, 0, 'Polling stops after completion');
   equal(downloads().length, 0, 'Title lookup does not download');
   equal(calls.filter((call) => call.path === '/api/recommendations').length, 0, 'Title lookup works without AI');
@@ -422,6 +451,88 @@ await test('Title polling recovers from list failure and cancels on leaving Watc
   equal(pollTimers.size, 0, 'Unmount stops scheduled polling');
   equal(host.querySelector('.watch-later-item'), null, 'Late response cannot render old page');
 }, () => { catalog = [{ ...video, catalog_id: 1, title: '', title_fetch_status: 'pending' }]; });
+
+await test('Watch later defaults to 20 days and its persistent default preserves individual choices', async () => {
+  assert(host.textContent.includes('expire after 20 days by default'), 'Twenty-day default is visible');
+  await click(button('Expiration settings'));
+  equal(retentionInput().value, '20', 'Default dialog starts at twenty days');
+  await input(retentionInput(), '35');
+  await click(retentionButton('Save expiration'));
+  equal(settings.watch_later_retention_days, 35, 'New default is saved');
+  equal(catalog[0].retention_days, 35, 'Existing inherited entry follows the default');
+  equal(catalog[1].retention_days, 7, 'Individual override is preserved');
+  await navigate('library'); await navigate('watch-later');
+  await click(button('Expiration settings'));
+  equal(retentionInput().value, '35', 'Default survives page navigation');
+  await input(retentionInput(), '-10'); await click(retentionButton('Save expiration'));
+  equal(settings.watch_later_retention_days, -1, 'Negative default is normalized to indefinite');
+  equal(catalog[0].expires_at, null, 'Inherited entry loses its deadline');
+  equal(catalog[1].retention_days, 7, 'Own choice also survives an indefinite default');
+  await input(find('#watch-later-urls'), 'https://vimeo.com/789');
+  await input(find('#watch-later-title'), 'New saved video');
+  await click(button('Save for later'));
+  equal(catalog[2].retention_days, null, 'New entries inherit the saved default');
+}, () => { catalog = [retained({ ...video, catalog_id: 1 }), retained({ ...video, catalog_id: 2, source_url: 'https://vimeo.com/456', title: 'Own choice' }, 7, true)]; });
+
+await test('An individual expiration persists and edits only the chosen saved entry', async () => {
+  const cards = [...host.querySelectorAll('.watch-later-item')];
+  await click(find('[aria-label="Expiration settings for saved video: A film for later"]'));
+  equal(retentionInput().value, '20', 'Entry starts with inherited twenty days');
+  await input(retentionInput(), '8'); await click(retentionButton('Save expiration'));
+  equal(retentionWrites()[0].path, '/api/recommendations/watch-later/1/retention', 'Uses the saved catalog id');
+  equal(catalog[0].retention_days, 8, 'Chosen entry has its own deadline');
+  equal(catalog[1].retention_days, 20, 'Sibling keeps its expiration');
+  equal(settings.watch_later_retention_days, 20, 'Default stays unchanged');
+  equal(find('.watch-later-item'), cards[0], 'Editing preserves the existing card');
+  await navigate('library'); await navigate('watch-later');
+  await click(find('[aria-label="Expiration settings for saved video: A film for later"]'));
+  equal(retentionInput().value, '8', 'Override survives navigation');
+  await input(retentionInput(), '-1'); await click(retentionButton('Save expiration'));
+  equal(find('.watch-later-expiration').textContent, 'Kept indefinitely', 'Indefinite choice appears on the saved card');
+}, () => { catalog = [retained({ ...video, catalog_id: 1 }), retained({ ...video, catalog_id: 2, source_url: 'https://vimeo.com/456', title: 'Sibling' })]; });
+
+await test('Expiration validation, cancellation, and failed saves preserve the saved entry', async () => {
+  await click(find('[aria-label="Expiration settings for saved video: A film for later"]'));
+  for (const value of ['0', '1.5', '', '3651']) {
+    await input(retentionInput(), value); await click(retentionButton('Save expiration'));
+    assert(retentionDialog().querySelector('[role="alert"]'), 'Invalid days are explained');
+  }
+  equal(retentionWrites().length, 0, 'Invalid values never reach the server');
+  await input(retentionInput(), '6'); await click(retentionButton('Cancel'));
+  equal(retentionWrites().length, 0, 'Cancellation never saves');
+  await click(find('[aria-label="Expiration settings for saved video: A film for later"]'));
+  equal(retentionInput().value, '20', 'Cancelled draft does not persist');
+  failRetention = true;
+  await input(retentionInput(), '6'); await click(retentionButton('Save expiration'));
+  equal(retentionInput().value, '6', 'Failed save preserves the draft');
+  equal(catalog[0].retention_days, 20, 'Failed save preserves the stored setting');
+  assert(retentionDialog().textContent.includes('Could not save Watch later expiration'), 'Save failure is visible');
+  failRetention = false; await click(retentionButton('Save expiration'));
+  equal(catalog[0].retention_days, 6, 'Retry succeeds');
+}, () => { catalog = [retained({ ...video, catalog_id: 1 })]; });
+
+await test('JSON imports preserve individual expiration settings and reject invalid ones', async () => {
+  await upload({ videos: [{ source_url: video.source_url, title: video.title, retention_days: 12 }, { source_url: 'https://vimeo.com/456', title: 'Keep forever', retention_days: -1 }] });
+  equal(writes()[0].body.videos[0].retention_days, 12, 'Custom days are submitted');
+  equal(catalog[0].retention_days, 12, 'Imported custom deadline is retained');
+  equal(catalog[1].expires_at, null, 'Imported negative days mean indefinite');
+  await upload([{ source_url: 'https://vimeo.com/789', retention_days: 0 }]);
+  equal(writes().length, 1, 'Invalid import never saves');
+  assert(host.textContent.includes('Each retention_days must be'), 'Invalid import field is explained');
+});
+
+await test('Expiration settings keep the same recommendations across Watch later navigation', async () => {
+  const requests = calls.filter((call) => call.path === '/api/recommendations').length;
+  const title = find('.recommendation-item h3').textContent;
+  await navigate('watch-later');
+  await click(button('Expiration settings'));
+  await input(retentionInput(), '30'); await click(retentionButton('Save expiration'));
+  await click(find('[aria-label="Expiration settings for saved video: A film for later"]'));
+  await input(retentionInput(), '10'); await click(retentionButton('Save expiration'));
+  await navigate('feed');
+  equal(calls.filter((call) => call.path === '/api/recommendations').length, requests, 'Expiration edits do not refresh recommendations');
+  equal(find('.recommendation-item h3').textContent, title, 'The same recommended video remains');
+}, () => { settings.enabled = true; settings.model_id = 'test-model'; catalog = [retained({ ...video, catalog_id: 1 })]; history.replaceState(null, '', '#feed'); });
 
 document.body.dataset.testStatus = report.every((item) => item.passed) ? 'passed' : 'failed';
 document.getElementById('results').textContent += `\n${report.filter((item) => item.passed).length}/${report.length} passed`;

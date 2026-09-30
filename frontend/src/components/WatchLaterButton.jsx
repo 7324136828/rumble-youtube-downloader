@@ -5,7 +5,7 @@ import Icon from './Icon';
 import './WatchLater.css';
 
 export default function WatchLaterButton({ video }) {
-  const { reloadSettings, savedWatchLaterUrls, noteWatchLaterSaved } = useRecommendations();
+  const { savedWatchLaterUrls, noteWatchLaterSaved } = useRecommendations();
   const initiallySaved = Boolean(video.user_added || video.origins?.includes('watch_later') || savedWatchLaterUrls.has(video.source_url));
   const [saved, setSaved] = useState(initiallySaved);
   const [saving, setSaving] = useState(false);
@@ -19,7 +19,6 @@ export default function WatchLaterButton({ video }) {
       await saveWatchLater([{ source_url: video.source_url, ...(video.title ? { title: video.title } : {}), ...(video.description ? { description: video.description } : {}) }]);
       setSaved(true);
       noteWatchLaterSaved([video.source_url]);
-      reloadSettings();
     } catch (err) { setError(err.message || 'Could not save this video for later.'); }
     finally { setSaving(false); }
   };

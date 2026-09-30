@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { getMediaItem, getRecommendations, recordRecommendationImpressions, startDownloads, updateLinkState } from '../services/api';
+import { getMediaItem, recordRecommendationImpressions, startDownloads, updateLinkState } from '../services/api';
 import { connectorBadgeClass, formatDuration, setPlayerMode } from '../mediaUtils';
 import { recommendationProviderIcon, recommendationProviderLabel } from '../recommendationUtils';
 import { downloadStatusLabel } from '../downloadUtils';
@@ -38,6 +38,9 @@ function impressionItems(videos) {
 }
 
 function Suggestion({ video, download, onAction, providerName }) {
+  const { savedWatchLaterUrls } = useRecommendations();
+  const displayVideo = savedWatchLaterUrls.has(video.source_url)
+    ? { ...video, user_added: true, origins: [...new Set([...(video.origins || []), 'watch_later'])] } : video;
   const [imageFailed, setImageFailed] = useState(false);
   const [repeatState, setRepeatState] = useState('idle');
   const [repeatError, setRepeatError] = useState('');
@@ -61,7 +64,7 @@ function Suggestion({ video, download, onAction, providerName }) {
     <div className="recommendation-item-body">
       <span className={connectorBadgeClass(video.connector)}>{providerName}</span>
       {video.verified === false && <span className="recommendation-unverified">Unverified link</span>}
-      <VideoOrigins video={video} />
+      <VideoOrigins video={displayVideo} />
       <h3>{video.title}</h3><p>{video.uploader || providerName}</p>
       {video.reason && <p className="recommendation-reason">{video.reason}</p>}
       <div className="recommendation-item-actions">
@@ -110,51 +113,36 @@ function SearchDetails({ sources, warnings = [] }) {
 }
 
 export default function RecommendationPanel({ context = 'watch', videoId = null, excludeUrls = [], source, navigate, onReady }) {
-  const { enabled, settings, revision, openSettings } = useRecommendations();
-  const [result, setResult] = useState(null);
-  const [requestError, setRequestError] = useState(null);
-  const [loadingKey, setLoadingKey] = useState(null);
-  const [refreshRequest, setRefreshRequest] = useState({ key: '', count: 0 });
+  const { enabled, settings, loading: settingsLoading, saving, openSettings, playlist, loadPlaylist, notePlaylistMedia,
+    recommendationSource, setRecommendationSource } = useRecommendations();
   const [downloads, setDownloads] = useState({});
-  const [providerFilter, setProviderFilter] = useState('all');
   const operations = useRef(new Map());
   const liveKey = useRef('');
-  const reportedImpressions = useRef(new WeakSet());
+  const reportedImpressions = useRef(new Set());
   const latestCallbacks = useRef({ navigate, onReady });
   latestCallbacks.current = { navigate, onReady };
-  const selectedSource = source ?? providerFilter;
+  const selectedSource = source ?? recommendationSource;
   const sourceAvailable = settings.providers.some((provider) => provider.enabled && (selectedSource === 'all' || provider.id === selectedSource));
   const sourceLabel = recommendationProviderLabel(selectedSource, settings.providers);
+  const displayedSource = playlist.request?.source ?? selectedSource;
+  const displayedSourceLabel = recommendationProviderLabel(displayedSource, settings.providers);
   const exclusionKey = JSON.stringify([...new Set(excludeUrls.filter(Boolean))].sort().slice(0, 100));
-  const scope = JSON.stringify([context, selectedSource, videoId, exclusionKey, revision, settings.model_id, enabled]);
-  const refreshCount = refreshRequest.key === scope ? refreshRequest.count : 0;
-  const key = `${scope}:${refreshCount}`;
+  const canRequest = enabled && settings.model_id && sourceAvailable && !settingsLoading && !saving;
+  const key = `${enabled}:${playlist.version}`;
   liveKey.current = key;
 
   useEffect(() => {
-    const controller = new AbortController();
-    if (!enabled || !settings.model_id || !sourceAvailable) return () => controller.abort();
-    setLoadingKey(key);
-    setResult(null);
-    setRequestError(null);
-    getRecommendations({ context, source: selectedSource, video_id: videoId, exclude_urls: JSON.parse(exclusionKey), limit: 8, refresh: refreshCount > 0 }, controller.signal).then((data) => {
-      if (!controller.signal.aborted && liveKey.current === key) setResult({ key, data });
-    }).catch((err) => {
-      if (!controller.signal.aborted && liveKey.current === key) setRequestError({ key, message: err.message || 'Recommendations are temporarily unavailable.' });
-    }).finally(() => {
-      if (!controller.signal.aborted && liveKey.current === key) setLoadingKey(null);
-    });
-    return () => controller.abort();
-  }, [enabled, settings.model_id, sourceAvailable, context, selectedSource, videoId, exclusionKey, key, refreshCount]);
+    if (!canRequest || playlist.attempted) return;
+    loadPlaylist({ context, source: selectedSource, video_id: videoId, exclude_urls: JSON.parse(exclusionKey), limit: 8 });
+  }, [canRequest, playlist.attempted, context, selectedSource, videoId, exclusionKey, loadPlaylist]);
 
   useEffect(() => {
-    if (!enabled || !settings.model_id || !sourceAvailable || result?.key !== key
-      || loadingKey === key || requestError?.key === key || !result.data.items?.length
-      || ['disabled', 'needs_history'].includes(result.data.status)) return;
+    const result = playlist.data;
+    if (!enabled || !result?.items?.length || ['disabled', 'needs_history'].includes(result.status)) return;
     const report = () => {
-      if (document.visibilityState === 'hidden' || liveKey.current !== key || reportedImpressions.current.has(result)) return;
-      reportedImpressions.current.add(result);
-      const items = impressionItems(result.data.items);
+      if (document.visibilityState === 'hidden' || liveKey.current !== key || reportedImpressions.current.has(key)) return;
+      reportedImpressions.current.add(key);
+      const items = impressionItems(result.items);
       if (!items.length) return;
       const eventId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       recordRecommendationImpressions({ event_id: eventId, context, items }).catch(() => {
@@ -164,7 +152,7 @@ export default function RecommendationPanel({ context = 'watch', videoId = null,
     report();
     document.addEventListener('visibilitychange', report);
     return () => document.removeEventListener('visibilitychange', report);
-  }, [enabled, settings.model_id, sourceAvailable, result, key, context, loadingKey, requestError]);
+  }, [enabled, playlist.data, key, context]);
 
   useEffect(() => {
     setDownloads({});
@@ -177,7 +165,10 @@ export default function RecommendationPanel({ context = 'watch', videoId = null,
     };
   }, [key]);
 
-  const refresh = () => setRefreshRequest({ key: scope, count: refreshCount + 1 });
+  const refresh = () => {
+    if (canRequest && !playlist.loading) loadPlaylist({ context, source: selectedSource,
+      video_id: videoId, exclude_urls: JSON.parse(exclusionKey), limit: 8 }, true);
+  };
   const updateDownload = (url, value) => setDownloads((previous) => ({ ...previous, [url]: { ...value, key } }));
   const open = (video, download) => {
     const mediaId = video.media_id || download?.media?.id;
@@ -193,8 +184,11 @@ export default function RecommendationPanel({ context = 'watch', videoId = null,
     operations.current.set(video.source_url, operation);
     const valid = () => !operation.cancelled && liveKey.current === operation.key;
     const finish = (value) => {
-      operations.current.delete(video.source_url);
-      if (valid()) updateDownload(video.source_url, value);
+      if (operations.current.get(video.source_url) === operation) operations.current.delete(video.source_url);
+      if (valid()) {
+        if (value.status === 'ready' && value.media?.id) notePlaylistMedia(video.source_url, value.media);
+        updateDownload(video.source_url, value);
+      }
     };
     const fail = (message) => finish({ status: 'failed', error: message });
     const poll = async (id) => {
@@ -231,26 +225,29 @@ export default function RecommendationPanel({ context = 'watch', videoId = null,
   };
 
   if (!enabled) return null;
-  const data = result?.key === key ? result.data : null;
-  const error = requestError?.key === key ? requestError.message : '';
-  const loading = settings.model_id && sourceAvailable && ((!data && !error) || loadingKey === key);
-  const searchedSources = (Array.isArray(data?.sources) ? data.sources : []).filter((entry) => entry && settings.providers.some((provider) => provider.enabled && provider.id === entry.id) && (selectedSource === 'all' || selectedSource === entry.id));
+  const data = playlist.data;
+  const error = playlist.error;
+  const loading = playlist.loading;
+  const searchedSources = (Array.isArray(data?.sources) ? data.sources : []).filter((entry) => entry && settings.providers.some((provider) => provider.enabled && provider.id === entry.id) && (displayedSource === 'all' || displayedSource === entry.id));
   return <section className={`recommendation-panel recommendation-panel-${context}`} aria-label={context === 'feed' ? 'Recommended videos for your feed' : context === 'history' ? 'Recommendations based on watch history' : 'AI suggested videos to play next'}>
-    <div className="recommendation-panel-heading"><div><span className="eyebrow">SELECTED FOR YOU</span><h2>{context === 'feed' ? 'Discover your next video' : context === 'history' ? `${selectedSource === 'all' ? '' : sourceLabel + ' '}recommendations` : 'AI picks for you'}</h2></div><button className="icon-btn" aria-label="Refresh recommendations" onClick={refresh} disabled={Boolean(loading) || !sourceAvailable}><Icon name="refresh" size={17} /></button></div>
-    <p className="recommendation-panel-intro">Ideas from your history and interests, selected by your model{selectedSource === 'all' ? ' across all your enabled websites.' : ` from ${sourceLabel}.`}</p>
+    <div className="recommendation-panel-heading"><div><span className="eyebrow">SELECTED FOR YOU</span><h2>{context === 'feed' ? 'Discover your next video' : context === 'history' ? `${displayedSource === 'all' ? '' : displayedSourceLabel + ' '}recommendations` : 'AI picks for you'}</h2></div><button className="icon-btn" aria-label="Refresh recommendations" onClick={refresh} disabled={loading || !canRequest}><Icon name="refresh" size={17} /></button></div>
+    <p className="recommendation-panel-intro">Ideas from your history and interests, selected by your model{displayedSource === 'all' ? ' across all your enabled websites.' : ` from ${displayedSourceLabel}.`} These picks stay the same until you refresh.</p>
     {data?.fallback_used && <p className="recommendation-fallback-note" role="status">Your model did not return usable picks. These videos were chosen at random from website search and Watch later using your fallback percentages.</p>}
     {source == null && <label className="recommendation-field recommendation-source-filter">Recommendation websites
-      <select aria-label="Recommendation websites" value={selectedSource} onChange={(event) => setProviderFilter(event.target.value)}>
+      <select aria-label="Recommendation websites" value={selectedSource} onChange={(event) => setRecommendationSource(event.target.value)}>
         <option value="all">All enabled websites</option>
         {selectedSource !== 'all' && !sourceAvailable && <option value={selectedSource} disabled>{sourceLabel} (not enabled)</option>}
         {settings.providers.filter((provider) => provider.enabled).map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
       </select>
+      <span className="recommendation-help">Website selection applies when you click Refresh.</span>
     </label>}
-    {!settings.model_id ? <div className="recommendation-state"><p>Choose a model configuration to start discovering videos.</p><button className="btn-secondary" onClick={openSettings}>Set up recommendations</button></div>
-      : !sourceAvailable ? <div className="recommendation-state" role="status"><p>{selectedSource === 'all' ? 'Enable at least one website to receive recommendations.' : `Enable ${sourceLabel} in recommendation settings to discover videos from this website.`}</p><button className="btn-secondary" onClick={openSettings}>Choose websites</button></div>
-        : loading ? <div className="recommendation-state" role="status"><span className="cf-loading-ring" /><p>Finding videos you might like...</p></div>
-        : error ? <div className="recommendation-state" role="alert"><p>{error}</p><div className="recommendation-form-actions"><button className="btn-secondary" onClick={refresh}>Try again</button><button className="link-btn" onClick={openSettings}>Model settings</button></div></div>
-          : data?.status === 'needs_history' ? <div className="recommendation-state" role="status"><Icon name="history" size={25} /><h3>A little inspiration to get started</h3><p>Watch a video or add a few interests to receive recommendations.</p><button className="btn-secondary" onClick={openSettings}>Add your interests</button></div>
+    {loading && data && <p className="recommendation-help" role="status">Refreshing recommendations...</p>}
+    {error && <div className="recommendation-state" role="alert"><p>{error}</p><div className="recommendation-form-actions"><button className="btn-secondary" onClick={refresh} disabled={!canRequest || loading}>Try again</button><button className="link-btn" onClick={openSettings}>Model settings</button></div></div>}
+    {!data && !settings.model_id ? <div className="recommendation-state"><p>Choose a model configuration to start discovering videos.</p><button className="btn-secondary" onClick={openSettings}>Set up recommendations</button></div>
+      : !data && !sourceAvailable ? <div className="recommendation-state" role="status"><p>{selectedSource === 'all' ? 'Enable at least one website to receive recommendations.' : `Enable ${sourceLabel} in recommendation settings to discover videos from this website.`}</p><button className="btn-secondary" onClick={openSettings}>Choose websites</button></div>
+        : loading && !data ? <div className="recommendation-state" role="status"><span className="cf-loading-ring" /><p>Finding videos you might like...</p></div>
+          : error && !data ? null
+          : data?.status === 'needs_history' ? <div className="recommendation-state" role="status"><Icon name="history" size={25} /><h3>A little inspiration to get started</h3><p>Watch a video or add a few interests, then click Refresh to receive recommendations.</p><button className="btn-secondary" onClick={openSettings}>Add your interests</button></div>
             : data?.status === 'disabled' ? <p className="recommendation-help">Recommendations have been turned off.</p>
               : data?.items?.length ? <ol className="recommendation-list">{data.items.map((video) => <Suggestion key={video.source_url} video={video} providerName={recommendationProviderLabel(video.connector, settings.providers)} download={downloads[video.source_url]?.key === key ? downloads[video.source_url] : null} onAction={action} />)}</ol>
                 : <div className="recommendation-state" role="status"><p>No new suggestions right now. Try refreshing or add more interests.</p><button className="btn-secondary" onClick={openSettings}>Update interests</button></div>}

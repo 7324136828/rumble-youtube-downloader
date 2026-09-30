@@ -6,11 +6,18 @@ import { recommendationProviderLabel } from '../recommendationUtils';
 import { connectorBadgeClass, setPlayerMode } from '../mediaUtils';
 import { useRecommendations } from './RecommendationContext';
 import VideoOrigins from './VideoOrigins';
+import VideoRetentionDialog from './VideoRetentionDialog';
 import Icon from './Icon';
 import './WatchLater.css';
 
 const MAX_IMPORT_BYTES = 1024 * 1024;
 const TITLE_POLL_MS = 2000;
+function expirationLabel(item) {
+  if (item.retention_days === null || item.retention_days < 0) return 'Kept indefinitely';
+  if (!item.expires_at) return `Expires after ${item.retention_days ?? 20} days`;
+  const remaining = Math.max(0, Math.ceil((new Date(item.expires_at).getTime() - Date.now()) / 86400000));
+  return remaining === 0 ? 'Expires during cleanup' : `Expires in ${remaining} day${remaining === 1 ? '' : 's'}`;
+}
 const hasTitle = (item) => Boolean(item.title?.trim() && item.title.trim() !== item.source_url);
 const titleActionLabel = (item, localError) => item.title_fetch_status === 'unavailable' || localError
   ? 'Retry title' : hasTitle(item) ? 'Attempt title fetch' : 'Fetch title';
@@ -30,12 +37,17 @@ function importVideos(value) {
       if (row[field] != null && typeof row[field] !== 'string') throw new Error(`Each ${field} must be text.`);
       if (row[field]?.trim()) item[field] = row[field].trim();
     }
+    if ('retention_days' in row) {
+      if (!Number.isInteger(row.retention_days) || row.retention_days === 0 || row.retention_days > 3650) throw new Error('Each retention_days must be 1 to 3650 or a negative whole number.');
+      item.retention_days = row.retention_days;
+    }
     return item;
   });
 }
 
 export default function WatchLaterPage({ navigate }) {
-  const { settings, reloadSettings, noteWatchLaterSaved, noteWatchLaterRemoved } = useRecommendations();
+  const { settings, settingsLoaded, saving: settingsSaving, updateSettings, reloadSettings, noteWatchLaterSaved, noteWatchLaterRemoved } = useRecommendations();
+  const [retentionTarget, setRetentionTarget] = useState(null);
   const [source, setSource] = useState('all');
   const [refresh, setRefresh] = useState(0);
   const [items, setItems] = useState([]);
@@ -396,6 +408,14 @@ export default function WatchLaterPage({ navigate }) {
     <div className="page-heading"><div><p className="eyebrow">YOUR OWN VIDEO PICKS</p><h1>Watch later<span className="accent">.</span></h1><p className="page-description">Save links for another day and give recommendations your own collection to choose from.</p></div></div>
     {error && <div className="error-banner" role="alert"><span>{error}</span><button className="link-btn" disabled={mutating} onClick={() => setRefresh((value) => value + 1)}>Reload saved videos</button></div>}
     {notice && <div className="success-banner" role="status">{notice}</div>}
+    {retentionTarget && <VideoRetentionDialog key={retentionTarget.defaultPolicy ? 'default' : retentionTarget.catalog_id}
+      video={retentionTarget} watchLater defaultPolicy={Boolean(retentionTarget.defaultPolicy)}
+      onUpdate={retentionTarget.defaultPolicy ? (value) => updateSettings({ watch_later_retention_days: value }) : undefined}
+      onClose={() => setRetentionTarget(null)} onSaved={(updated) => {
+        if (retentionTarget.defaultPolicy) setRefresh((value) => value + 1);
+        else setItems((previous) => previous.map((item) => item.catalog_id === updated.catalog_id ? updated : item));
+        setRetentionTarget(null); setNotice('Watch later expiration saved.');
+      }} />}
     <div className="watch-later-forms">
       <section className="recommendation-settings-card"><h2>Add video links</h2><form onSubmit={add}>
         <label className="recommendation-field" htmlFor="watch-later-urls">Video URLs<textarea id="watch-later-urls" value={urls} onChange={(event) => setUrls(event.target.value)} placeholder="One video link per line" rows={3} disabled={mutating} required /></label>
@@ -406,7 +426,7 @@ export default function WatchLaterPage({ navigate }) {
       </form></section>
       <section className="recommendation-settings-card"><h2>Import a video list</h2><form onSubmit={upload}>
         <label className="recommendation-field" htmlFor="watch-later-import">JSON file<input id="watch-later-import" ref={fileRef} type="file" accept=".json,application/json" disabled={mutating} onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
-        <p className="recommendation-help">Import an array of videos or an object with a <code>videos</code> array. Each entry needs <code>source_url</code> and may include <code>title</code> and <code>description</code>. Missing titles are fetched in the background; supplied titles stay as entered. Up to 200 videos and 1 MiB per file.</p>
+        <p className="recommendation-help">Import an array of videos or an object with a <code>videos</code> array. Each entry needs <code>source_url</code> and may include <code>title</code>, <code>description</code>, and an individual <code>retention_days</code> choice. Missing titles are fetched in the background; supplied titles stay as entered. Up to 200 videos and 1 MiB per file.</p>
         <button className="btn-secondary" disabled={!file || mutating}><Icon name="folder" size={15} />Import video list</button>
       </form></section>
       <section className="recommendation-settings-card"><h2>Save every link from a page</h2><form onSubmit={savePageLinks}>
@@ -415,7 +435,8 @@ export default function WatchLaterPage({ navigate }) {
         <button className="btn-primary" disabled={linksMutating || !pageUrl.trim()}><Icon name="bolt" size={15} />{linksMutating ? 'Reading links…' : 'Save all links'}</button>
       </form></section>
     </div>
-    <div className="watch-later-toolbar"><h2>Saved videos <span className="count-pill">{total}</span></h2><label className="recommendation-field">Website<select aria-label="Watch later website" value={source} onChange={(event) => setSource(event.target.value)} disabled={mutating}><option value="all">All websites</option>{providerIds.map((id) => <option key={id} value={id}>{recommendationProviderLabel(id, settings.providers)}</option>)}</select></label></div>
+    <div className="watch-later-toolbar"><h2>Saved videos <span className="count-pill">{total}</span></h2><button className="btn-secondary" disabled={!settingsLoaded || settingsSaving || mutating} onClick={() => setRetentionTarget({ defaultPolicy: true, title: 'Default for Watch later entries', retention_days: settings.watch_later_retention_days ?? 20 })}><Icon name="settings" size={15} />Expiration settings</button><label className="recommendation-field">Website<select aria-label="Watch later website" value={source} onChange={(event) => setSource(event.target.value)} disabled={mutating}><option value="all">All websites</option>{providerIds.map((id) => <option key={id} value={id}>{recommendationProviderLabel(id, settings.providers)}</option>)}</select></label></div>
+    <p className="recommendation-help">{settings.watch_later_retention_days < 0 ? 'Watch later entries are kept indefinitely by default.' : `Watch later entries expire after ${settings.watch_later_retention_days ?? 20} days by default.`} Each entry can have its own expiration setting.</p>
     {pollError && <p className="watch-later-poll-error" role="status">{pollError}</p>}
     {loading ? <p className="muted" role="status">Loading saved videos…</p> : items.length ? <div className="watch-later-list">{items.map((item) => <article className="watch-later-item" key={item.catalog_id}>
       <div className="watch-later-item-thumbnail"><span><Icon name="play" size={24} /></span>{item.thumbnail_url && <img src={item.thumbnail_url} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />}</div>
@@ -424,8 +445,9 @@ export default function WatchLaterPage({ navigate }) {
         {(item.title_fetch_status === 'pending' || titleRequests.has(item.catalog_id)) && <p className="watch-later-title-status" role="status">Fetching title…</p>}
         {(titleErrors[item.catalog_id] || item.title_fetch_status === 'unavailable') && <><p className="watch-later-title-error" role="status">{titleFailureMessage(item, titleErrors[item.catalog_id])}</p><form className="watch-later-manual-title" onSubmit={(event) => saveManualTitle(event, item)}><label className="sr-only" htmlFor={`watch-later-manual-title-${item.catalog_id}`}>Title for {item.source_url}</label><input id={`watch-later-manual-title-${item.catalog_id}`} value={manualTitles[item.catalog_id] || ''} onChange={(event) => setManualTitles((previous) => ({ ...previous, [item.catalog_id]: event.target.value }))} maxLength={500} placeholder="Enter a title" disabled={titleSaves.has(item.catalog_id)} /><button className="btn-secondary" disabled={titleSaves.has(item.catalog_id) || !(manualTitles[item.catalog_id] || '').trim()}>{titleSaves.has(item.catalog_id) ? 'Saving…' : 'Save title'}</button></form></>}
         {playback[item.catalog_id]?.error && <p className="watch-later-play-error" role="alert">{playback[item.catalog_id].error}</p>}
+        <p className="watch-later-expiration">{expirationLabel(item)}</p>
       </div>
-      <div className="watch-later-item-actions"><button className="btn-primary" aria-label={`Play saved video: ${item.title || item.source_url}`} disabled={['starting', 'downloading'].includes(playback[item.catalog_id]?.status)} onClick={() => play(item)}><Icon name="play" size={14} />{playback[item.catalog_id]?.status === 'starting' ? 'Preparing…' : playback[item.catalog_id]?.status === 'downloading' ? downloadStatusLabel({ ...playback[item.catalog_id], status: playback[item.catalog_id].mediaStatus }) : playback[item.catalog_id]?.error ? 'Retry play' : 'Play'}</button><button className="btn-secondary" aria-label={`${titleActionLabel(item, titleErrors[item.catalog_id])}: ${item.source_url}`} disabled={mutating || item.title_fetch_status === 'pending' || titleRequests.has(item.catalog_id)} onClick={() => fetchTitle(item)}>{item.title_fetch_status === 'pending' || titleRequests.has(item.catalog_id) ? 'Fetching title…' : titleActionLabel(item, titleErrors[item.catalog_id])}</button><a className="btn-secondary" href={item.source_url} target="_blank" rel="noopener noreferrer"><Icon name="external" size={14} />Open original</a><button className="btn-secondary" aria-label={`Remove saved video: ${item.title || item.source_url}`} disabled={mutating} onClick={() => remove(item)}><Icon name="trash" size={14} />Remove</button></div>
+      <div className="watch-later-item-actions"><button className="btn-primary" aria-label={`Play saved video: ${item.title || item.source_url}`} disabled={['starting', 'downloading'].includes(playback[item.catalog_id]?.status)} onClick={() => play(item)}><Icon name="play" size={14} />{playback[item.catalog_id]?.status === 'starting' ? 'Preparing…' : playback[item.catalog_id]?.status === 'downloading' ? downloadStatusLabel({ ...playback[item.catalog_id], status: playback[item.catalog_id].mediaStatus }) : playback[item.catalog_id]?.error ? 'Retry play' : 'Play'}</button><button className="btn-secondary" aria-label={`${titleActionLabel(item, titleErrors[item.catalog_id])}: ${item.source_url}`} disabled={mutating || item.title_fetch_status === 'pending' || titleRequests.has(item.catalog_id)} onClick={() => fetchTitle(item)}>{item.title_fetch_status === 'pending' || titleRequests.has(item.catalog_id) ? 'Fetching title…' : titleActionLabel(item, titleErrors[item.catalog_id])}</button><a className="btn-secondary" href={item.source_url} target="_blank" rel="noopener noreferrer"><Icon name="external" size={14} />Open original</a><button className="btn-secondary" aria-label={`Expiration settings for saved video: ${item.title || item.source_url}`} disabled={mutating} onClick={() => setRetentionTarget({ ...item, retention_days: item.retention_days === undefined ? 20 : item.retention_days })}><Icon name="settings" size={14} />Expiration</button><button className="btn-secondary" aria-label={`Remove saved video: ${item.title || item.source_url}`} disabled={mutating} onClick={() => remove(item)}><Icon name="trash" size={14} />Remove</button></div>
     </article>)}</div> : !error && <div className="collection-empty"><Icon name="folder" size={28} /><h3>No saved videos here yet</h3><p>Paste video links above or use Watch later on a search result.</p></div>}
     {!loading && items.length < total && <button className="btn-secondary watch-later-load-more" disabled={loadingMore || mutating} onClick={loadMore}>{loadingMore ? 'Loading…' : 'Load more saved videos'}</button>}
     <section className="watch-later-links" aria-labelledby="saved-page-links-heading">
