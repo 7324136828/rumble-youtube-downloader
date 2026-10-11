@@ -17,6 +17,8 @@ jobs:
     name: Build and verify Windows x64 packages
     runs-on: windows-2022
     timeout-minutes: 120
+    env:
+      FFMPEG_DOWNLOAD_URL: https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
     defaults:
       run:
         shell: pwsh
@@ -35,32 +37,82 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Set up Python
+        id: python
         uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           architecture: x64
 
       - name: Set up Node.js
+        id: node
         uses: actions/setup-node@v7
         with:
           node-version: '24'
           package-manager-cache: false
 
-      - name: Install FFmpeg and ffprobe
-        id: ffmpeg
+      - name: Determine pip cache refresh period
+        id: pip-cache-period
         run: |
-          $url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
-          $archive = Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+          # Refresh weekly so new versions allowed by requirements can enter the cache.
+          $today = [DateTime]::UtcNow.Date
+          $week = $today.AddDays(-[int]$today.DayOfWeek).ToString('yyyyMMdd')
+          "week=$week" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      # build.py uses these directories explicitly rather than the global caches.
+      - name: Cache Python package downloads
+        uses: actions/cache@v6
+        with:
+          path: build/pip-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-pip-v1-${{ steps.python.outputs.python-version }}-${{ hashFiles('backend/requirements.txt', 'backend/requirements-build.txt') }}-${{ steps.pip-cache-period.outputs.week }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-pip-v1-${{ steps.python.outputs.python-version }}-${{ hashFiles('backend/requirements.txt', 'backend/requirements-build.txt') }}-
+            ${{ runner.os }}-${{ runner.arch }}-pip-v1-${{ steps.python.outputs.python-version }}-
+
+      - name: Cache npm package downloads
+        uses: actions/cache@v6
+        with:
+          path: build/npm-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v1-${{ steps.node.outputs.node-version }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-npm-v1-${{ steps.node.outputs.node-version }}-
+
+      - name: Resolve FFmpeg release checksum
+        id: ffmpeg-checksum
+        run: |
           $checksumPath = Join-Path $env:RUNNER_TEMP 'ffmpeg.zip.sha256'
-          $destination = Join-Path $env:RUNNER_TEMP 'ffmpeg'
-          Invoke-WebRequest -Uri $url -OutFile $archive
-          Invoke-WebRequest -Uri "$url.sha256" -OutFile $checksumPath
+          Invoke-WebRequest -Uri "$env:FFMPEG_DOWNLOAD_URL.sha256" -OutFile $checksumPath
           $expected = ((Get-Content -LiteralPath $checksumPath -Raw).Trim() -split '\s+')[0]
-          if ($expected -notmatch '^[a-fA-F0-9]{64}$' -or
-              (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) {
+          if ($expected -notmatch '^[a-fA-F0-9]{64}$') {
+            throw 'FFmpeg release has an invalid SHA-256 checksum.'
+          }
+          "sha256=$($expected.ToLowerInvariant())" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Cache FFmpeg and ffprobe
+        id: ffmpeg-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/ffmpeg
+          # No fallback: only reuse binaries from this checksum-verified release.
+          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-essentials-v1-${{ steps.ffmpeg-checksum.outputs.sha256 }}
+
+      - name: Download and verify FFmpeg and ffprobe
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        env:
+          FFMPEG_SHA256: ${{ steps.ffmpeg-checksum.outputs.sha256 }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+          $destination = Join-Path $env:RUNNER_TEMP 'ffmpeg'
+          Invoke-WebRequest -Uri $env:FFMPEG_DOWNLOAD_URL -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $env:FFMPEG_SHA256) {
             throw 'FFmpeg download failed SHA-256 verification.'
           }
           Expand-Archive -LiteralPath $archive -DestinationPath $destination
+
+      - name: Locate FFmpeg and ffprobe
+        id: ffmpeg
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'ffmpeg'
           $tools = @(Get-ChildItem -LiteralPath $destination -Filter ffmpeg.exe -Recurse)
           if ($tools.Count -ne 1) { throw 'Expected exactly one ffmpeg.exe.' }
           $bin = $tools[0].Directory.FullName
@@ -73,6 +125,7 @@ jobs:
       - name: Build portable applications and smoke-test binaries
         env:
           FFMPEG_BIN: ${{ steps.ffmpeg.outputs.bin }}
+          NPM_CONFIG_PREFER_OFFLINE: 'true'
         run: |
           $node = (Get-Command node.exe).Source
           python build.py --ffmpeg-dir $env:FFMPEG_BIN --js-runtime $node

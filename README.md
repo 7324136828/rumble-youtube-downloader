@@ -543,6 +543,14 @@ workflow builds on Windows x64 with Python 3.12, Node.js 24, and a checksum-veri
 FFmpeg download. It runs the builder's executable smoke checks, launcher/packaging
 tests, backend tests, and frontend browser tests before uploading the packages.
 
+Python and npm package downloads are cached in the directories used by `build.py`,
+with keys based on the runtime versions and dependency files. Dependency changes
+can reuse previously downloaded packages, while installation still runs to check
+requirements. The pip cache refreshes weekly to retain new versions allowed by
+the Python requirements. FFmpeg and ffprobe are cached by the current release's
+SHA-256 checksum; each run checks the small checksum file and downloads the ZIP
+only on a cache miss. The first successful build populates these caches.
+
 Pull requests targeting `main` build and upload workflow artifacts. Pushes to
 `main` also publish a GitHub release. To build manually, open **Actions → Build and
 release Windows binaries → Run workflow**; selecting `main` also publishes a
