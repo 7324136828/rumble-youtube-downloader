@@ -297,6 +297,23 @@ player preferences use the current browser's local storage. There are no account
 or cloud synchronization. Copy link copies the original source URL. In-app video routes refer to this
 running app and require access to the same backend library.
 
+### Library transcripts
+
+Use **Get transcript** on a saved video or audio item. The app first checks
+the original source for subtitles, including automatic captions. When subtitles
+are unavailable, it transcribes the saved media locally with Whisper. Uploaded
+media uses Whisper directly. You can view and download completed transcripts;
+failures remain visible and can be retried.
+
+This workflow works in development and portable builds independently of the
+older Convert tools. Whisper defaults to the multilingual `base` model on the
+CPU. Set `WHISPER_MODEL` or `WHISPER_DEVICE` in `.env` to choose another supported
+model or device. CUDA requires a compatible PyTorch build and GPU. Model weights
+download on first use to
+`JOBS_ROOT/models/whisper` (`%TEMP%\prod_jobs\models\whisper` by default on Windows)
+and are reused afterward. The first Whisper transcript needs internet access
+for that download. Transcription can take time for long recordings.
+
 ### MP3 playback and your own media
 
 Each saved item has a **Convert to MP3** action. Once conversion completes, Watch
@@ -394,7 +411,8 @@ Node 22+ satisfies the documented Node runtime requirement. See the official
 
 Setup uses an active Python environment or creates `.venv`, installs the backend
 requirements and frontend npm dependencies, and seeds `.env` from `.env.example`.
-The requirements retain Whisper and Silero VAD for the legacy converter.
+The requirements include Whisper for native library transcripts and retain
+Silero VAD for the optional legacy converter.
 
 The runner normally starts the frontend at <http://localhost:5173> and backend at
 <http://127.0.0.1:8000>, with API docs at `/docs`. If a port is occupied, it selects
@@ -403,22 +421,29 @@ the selected backend. Stop both services with Ctrl+C.
 
 ### LAN access and custom ports
 
-To use the app from another computer or phone on the same network:
+The development runner binds both services to `0.0.0.0` by default, matching
+the sample project. It prints a frontend and API URL for each detected IPv4
+adapter. Open the frontend LAN URL from another device on the same network:
 
 ```powershell
-.\run_lan.bat
+.\run.bat
 # Choose separate frontend and backend ports:
-.\run_lan.bat --frontend-port 5174 --backend-port 8001
-# Equivalent command:
-.\run.bat serve --lan --frontend-port 5174 --backend-port 8001
+.\run.bat --frontend 5174 --backend 8001
+# Local-only access:
+.\run.bat --host 127.0.0.1
+# Bind one network adapter:
+.\run.bat --host 192.168.1.20
 ```
 
-On Linux/macOS, use `./run.sh serve --lan --frontend-port 5174 --backend-port 8001`.
+On Linux/macOS, use `./run.sh --frontend 5174 --backend 8001`.
 The `serve` command is optional when calling `run.bat`, `run.sh`, or `run.py` directly.
-Port flags also work without `--lan`.
+The existing `run_lan.bat` and `serve --lan` commands still work. `--lan` explicitly
+selects `0.0.0.0` even if `.env` sets a loopback host; an explicit `--host` takes
+precedence over both `--lan` and `BACKEND_HOST`.
 
-LAN mode listens on all IPv4 interfaces and prints LAN URLs. Open the frontend
-URL, such as `http://192.168.1.20:5174`, on the other device. The frontend proxies
+Open the frontend URL, such as `http://192.168.1.20:5174`, on the other device.
+Virtual adapter addresses may also be listed; use the adapter connected to that
+device. The frontend proxies
 API requests, playback, thumbnails, and downloads to the chosen backend port.
 LAN devices share the host's library and controls; the app has no authentication.
 If the page cannot be reached, allow Node.js (or the frontend TCP port) through
@@ -429,6 +454,109 @@ Command-line ports override environment variables and `.env`. Explicit ports mus
 be different and available; otherwise startup fails with an error. Without port
 flags, `FRONTEND_PORT` (default `5173`) and `BACKEND_PORT` (default `8000`) remain
 starting ports, with automatic selection of the next available port.
+`--frontend-port` and `--backend-port` are aliases for the shorter flags.
+`--host` overrides `BACKEND_HOST` from the terminal or `.env`. Existing `.env`
+files keep their settings; change a loopback host to `0.0.0.0` to enable LAN.
+
+### Portable Windows build
+
+Build on Windows with Python 3.10+, Node.js 22+, npm, FFmpeg, and ffprobe available:
+
+```powershell
+.\build.bat
+# Reuse installed Python/npm dependencies:
+.\build.bat --skip-install
+```
+
+The builder uses the active Python environment or the project `.venv`, installs
+dependencies, builds React, and freezes the backend with PyInstaller. It produces:
+
+```text
+dist/
+  Debug/                  Local access: 127.0.0.1
+  Release/                LAN access: 0.0.0.0
+    server.exe            Packaged backend and frontend server
+    public/               Built React assets
+    bin/                  FFmpeg, ffprobe, and Node.js or Deno
+    run.bat               Launcher
+    runtime.json          Default bind address
+    port_mapping.json     Default frontend and backend ports
+```
+
+Both profiles contain the same files, with different `runtime.json` host defaults.
+Copy the entire chosen folder to another Windows machine; it does not need a
+separate Python, Node.js, or FFmpeg installation. Start it with:
+
+```powershell
+.\dist\Debug\run.bat
+.\dist\Release\run.bat --frontend 4000 --backend 9000
+.\dist\Release\run.bat --host 127.0.0.1
+```
+
+Both Debug and Release launchers initialize `%APPDATA%\ClipFeed\settings.json`
+before starting the services. If the file is missing, they create `{}`, then fill
+only missing `frontend_port` and `backend_port` fields from `port_mapping.json`
+beside `server.exe`. The builder copies the project's `port_mapping.json` into
+both profiles; its current defaults are frontend `4123` and backend `8010`.
+Existing port values, storage preferences, and other settings are preserved.
+The services reread the saved ports at startup, including when `server.exe` is
+launched directly. Edit the settings file while the app is stopped to change ports
+for subsequent launches. Both ports must be integers from `1` to `65535`, distinct
+and available; invalid configuration or an occupied port stops startup with an
+error. The frontend streams `/api` requests to the selected backend,
+including uploads, video seeking, thumbnails, and downloads. Changing ports
+does not require rebuilding React. Ctrl+C stops both services.
+
+An optional `.env` beside `server.exe` accepts `FRONTEND_PORT`, `BACKEND_PORT`,
+`BACKEND_HOST`, and the normal app settings. Terminal variables override `.env`;
+CLI flags override both, and environment values override the saved ports for that
+launch without changing `settings.json`. For the host, `runtime.json` supplies the fallback.
+Data defaults to the operating system's temporary directory under `prod_jobs`,
+including `jobs.db` and the `library` folder (`%TEMP%\prod_jobs` on Windows).
+Development, Debug, and Release use the folder saved in
+`%APPDATA%\ClipFeed\settings.json`, or the temp default when no folder is selected.
+Choose a folder in **Settings** and restart the app to apply it. Relative
+environment storage/cookie/converter paths resolve beside the executable; set `JOBS_ROOT` in
+each profile's `.env` for separate storage. Rebuilds replace application files
+and `bin` while preserving `.env` and other user files; a failed replacement
+restores the previous artifacts in both profiles.
+
+Use `--ffmpeg-dir C:\path\to\bin` to select media tools, or
+`--js-runtime C:\path\to\node.exe` (or `deno.exe`) to select the bundled
+JavaScript runtime. Shared FFmpeg builds also copy adjacent DLLs and validate
+that the copied tools start with a minimal PATH. Allow `server.exe` through
+Windows Firewall on your private network for Release LAN access.
+
+The legacy `skill/original-project/download_rumble.py` source is absent from this
+checkout, so the older **Convert** workflow remains unavailable. Normal packages
+include native library transcripts with Whisper, alongside library, search, and
+media tools. If you have the legacy source,
+`build.bat --converter-dir C:\path\to\original-project` also includes its Python
+sources and Silero VAD dependencies. That optional converter package has not
+been verified here. Whisper's runtime is bundled; model weights download on
+first use and remain separate from application packaging.
+
+### Differences from the sample project
+
+The LAN host defaults, portable Debug/Release profiles, host/port overrides,
+frontend proxy, and rebuild preservation now follow `sample-react-python-project`.
+These differences remain:
+
+| Area | ClipFeed | Sample |
+| --- | --- | --- |
+| Frontend | JavaScript/JSX and Vite 5; no TypeScript check | TypeScript, `tsc`, and Vite 6 |
+| Browser tests | Chromium fixture suites with mocked APIs, plus separate backend tests | Playwright tests against the live backend/proxy, including WebKit |
+| Development port flags | Exact ports fail when busy; environment/default ports auto-advance | CLI ports are starting ports and auto-advance |
+| Backend reload | Disabled so background downloads are not interrupted | Enabled in development |
+| Development dependency checks | Reports failures when services start | Checks npm and frontend dependencies before launch |
+| CORS | Backend allows all origins; `CORS_ORIGINS` is not enforced | Configurable origin allowlist |
+| Development storage | OS temporary `prod_jobs`; select a durable folder in Settings or override `JOBS_ROOT` | Project-local persistent data |
+| Moving existing data | Saved media/job records contain absolute paths; moving a populated folder does not rebase them | Counter data moves with its database folder |
+| Portable dependencies | Also bundles FFmpeg and a JavaScript runtime; streams media and uploads | Counter app needs neither media tools nor large-file streaming |
+
+The Connector remains an independent service. For remote Connector use, set
+its **Downloader address** to a LAN URL reachable by both its backend and
+browser; see [remote setup](docs/connector-integration.md#addresses-and-remote-setups).
 
 ## Connectors and download lifecycle
 
@@ -557,6 +685,7 @@ job output directories, and database connections close after each operation.
 | GET | `/api/video-keywords?q=` | Return the local word cloud, enrichment status counts, and saved videos filtered by generated keyword |
 | GET | `/api/search?q=&source=all&limit=12&fetch_all=false` | Search enabled websites; `fetch_all=true` collects up to 200 usable links from configured search pages instead of the normal 1–24 result page |
 | GET / POST | `/api/watch-history` | Read recent history or record actual playback |
+| GET / PATCH | `/api/settings/storage` | Read/update the data folder in user settings JSON; changes apply after restart |
 | GET / PATCH | `/api/settings/downloads` | Read/update processing and default `retention_days`; expiration changes update current/future downloads without an individual override |
 | GET / PATCH | `/api/settings/links` | List recorded links and update whether user-marked repeated links are hidden |
 | PATCH | `/api/settings/links/{link_id}` | Set a recorded link state to `silenced` (user-marked repeated), `allowed`, or `excluded` |
@@ -582,6 +711,8 @@ job output directories, and database connections close after each operation.
 | POST | `/api/media/{id}/thumbnail` | Replace artwork using multipart `thumbnail`; returns the updated item |
 | PATCH | `/api/media/{id}/playback` | Select `{format: "original"}` or a completed `{format: "mp3"}` |
 | GET | `/api/media/{id}/download` | File attachment; 409 until ready |
+| GET / POST | `/api/media/{id}/transcript` | Read transcript status/text or queue source captions with local Whisper fallback |
+| GET | `/api/media/{id}/transcript/download` | Download the completed transcript as UTF-8 text; 409 until ready |
 | POST | `/api/media/{id}/conversions/{format}` | Start an on-demand `mp4` or `mp3` conversion |
 | GET | `/api/media/{id}/conversions/{format}/download` | Download a completed derived file |
 | GET | `/api/media/{id}/conversions/{format}/stream` | Seekable playback of a completed MP4 or MP3 |
@@ -599,7 +730,9 @@ Media items expose `id`, `source_url`, `connector`, `status`, `progress`, `stage
 `expires_at`, `retention_override` (an individual expiration choice), file size,
 `error_message`, `playback_warning`, `stream_url`, `thumbnail_url`, `download_url`,
 `file_name`, `media_kind`, `playback_format`, generated `keywords`, and persistent
-`conversions` state for MP4 and MP3 outputs.
+`conversions` state for MP4 and MP3 outputs, and `transcript` status/source/language
+with its text and download URLs. Transcript text is returned by the transcript
+endpoint when ready.
 
 Routes include `#/library`, `#/library/add`, `#/search`, `#/keywords`, `#/recommendations`, `#/settings`, `#/feed`, `#/feed/<id>`, `#/watch`,
 `#/watch/<id>`, `#/watch-history`, `#/watch-later`, `#/downloads`, `#/convert`,
@@ -608,11 +741,41 @@ Routes include `#/library`, `#/library/add`, `#/search`, `#/keywords`, `#/recomm
 ## Configuration and storage
 
 See `.env.example` for backend options: `BACKEND_HOST`, `BACKEND_PORT`,
-`ORIGINAL_PROJECT_DIR`, `JOBS_DB_PATH`, `JOBS_ROOT`, `MEDIA_ROOT`, and
+`ORIGINAL_PROJECT_DIR`, `CLIPFEED_SETTINGS_PATH`, `JOBS_DB_PATH`, `JOBS_ROOT`, `MEDIA_ROOT`, and
 `MAX_CONCURRENT_DOWNLOADS`, `YTDLP_COOKIE_FILE` (optional Netscape cookie file),
+`WHISPER_MODEL` (default `base`), `WHISPER_DEVICE` (default `cpu`),
 and `RECOMMENDATION_CONNECTOR_URL` (default
 `http://127.0.0.1:8301`). The runner also accepts `FRONTEND_PORT` as its starting
 frontend port.
+
+The app creates `%APPDATA%\ClipFeed\settings.json` on Windows at startup. Choose
+the data folder in **Settings**, or edit the file while the app is stopped:
+
+```json
+{
+  "data_root": "D:\\ClipFeedData",
+  "frontend_port": 4123,
+  "backend_port": 8010
+}
+```
+
+Use an absolute path. Environment variables and home shortcuts such as `%TEMP%`
+and `~` are expanded. Saving a folder applies after restarting the app. A new
+folder starts a separate library: existing files are not moved, and saved file
+paths are not rewritten. Keep the original folder to return to its library by
+selecting it again. Other app preferences remain in the SQLite database in that
+data folder. Set `data_root` to `null`, or clear the
+folder in Settings, to use the default.
+
+Portable builds use `frontend_port` and `backend_port` on the next launch. Missing
+port fields are filled from the packaged `port_mapping.json`; saved values stay
+in place across rebuilds. Development `run.bat` continues to use its CLI and
+environment port settings.
+
+The equivalent settings location is `~/Library/Application Support/ClipFeed/settings.json`
+on macOS and `$XDG_CONFIG_HOME/ClipFeed/settings.json` (or
+`~/.config/ClipFeed/settings.json`) on Linux. `CLIPFEED_SETTINGS_PATH` selects an
+alternative absolute settings-file path for hosted instances and isolated tests.
 
 Downloaded videos, SQLite metadata, and legacy working folders default to the
 operating system's temporary directory under `prod_jobs`. On Windows:
@@ -620,14 +783,20 @@ operating system's temporary directory under `prod_jobs`. On Windows:
 - Videos and thumbnails: `%TEMP%\prod_jobs\library`
 - Database for jobs, videos, watch history, recommendation catalog, and preferences: `%TEMP%\prod_jobs\jobs.db`
 - Legacy working folders: `%TEMP%\prod_jobs\<job-id>`
+- Whisper model cache: `%TEMP%\prod_jobs\models\whisper`
 
-`JOBS_ROOT` relocates this storage root; `MEDIA_ROOT` and `JOBS_DB_PATH` can override
-the media and database locations individually. Unset or empty values use the
-defaults. Files remain between app restarts but may be removed by system temporary
-file cleanup. Set `JOBS_ROOT` to a durable directory if you want permanent storage.
+An explicit `JOBS_ROOT` overrides the saved `data_root`; otherwise the saved folder
+or default is used. `MEDIA_ROOT` and `JOBS_DB_PATH` can override the media and
+database locations individually. Unset or empty environment values use the saved
+folder or defaults. Files remain between app restarts but may be removed by system
+temporary file cleanup. Choose a durable data folder in Settings if you want
+permanent storage.
 For an existing installation, stop the app and move `backend/jobs.db` to the new
 database location before restarting to retain its library records (do not replace
 an existing destination database). The default download concurrency is two.
+
+Source changes to these settings require rebuilding existing portable executables
+with `build.bat`; a development launch uses the updated code directly.
 
 The recommendation catalog uses `recommendation_websites`, `recommendation_videos`,
 `recommendation_video_origins`, and `recommendation_history`. It retains discovery
@@ -639,15 +808,23 @@ playback history remains separate in `watch_history`.
 From the repository root on Windows:
 
 ```powershell
-.venv\Scripts\python.exe -m unittest discover -s tests -v
-.venv\Scripts\python.exe -m unittest discover -s backend/tests -v
+$previousSettingsPath = $env:CLIPFEED_SETTINGS_PATH
+try {
+  $env:CLIPFEED_SETTINGS_PATH = Join-Path $env:TEMP "ClipFeed-tests-$([guid]::NewGuid()).json"
+  .venv\Scripts\python.exe -m unittest discover -s tests -v
+  .venv\Scripts\python.exe -m unittest discover -s backend/tests -v
+} finally {
+  $env:CLIPFEED_SETTINGS_PATH = $previousSettingsPath
+}
 npm.cmd --prefix frontend run build
 npm.cmd --prefix frontend run test:player
 npm.cmd --prefix frontend run test:app
 npm.cmd --prefix frontend run test:webm
 ```
 
-On Linux/macOS, use `.venv/bin/python` and `npm` in the same commands.
+The temporary settings-file override keeps startup tests out of your normal
+user settings. On Linux/macOS, use `.venv/bin/python` and `npm`; isolate the backend
+suite with `CLIPFEED_SETTINGS_PATH="$(mktemp -d)/settings.json" .venv/bin/python -m unittest discover -s backend/tests -v`.
 Browser tests require Chrome, Edge, or Chromium installed locally. Set
 `PLAYER_TEST_BROWSER` to the executable path when it cannot be found automatically.
 The browser suites cover player behavior, app navigation, Feed/Watch/search,
@@ -659,6 +836,15 @@ VP9/Opus and AV1/Opus WebM fixtures through `CustomVideoPlayer`; both passed in
 Chrome 153. Its fixture-generation commands are recorded in
 [`frontend/tests/native-webm.fixtures.md`](frontend/tests/native-webm.fixtures.md).
 It also checks real MP3 playback and seeking with persistent thumbnail artwork.
+
+Launcher/build tests cover host and CLI precedence, LAN and loopback bindings,
+temporary storage defaults and explicit path overrides, occupied ports, rebuild
+preservation and rollback, streaming range/encoding headers, multipart uploads,
+and upstream cleanup on disconnect.
+
+Storage settings tests cover the user JSON location, defaults and environment
+precedence, folder validation, atomic updates, preservation of invalid files and
+unrecognized settings, and restart behavior.
 
 The offline backend suite uses fake connectors and videos
 generated locally with FFmpeg, covering connector routing, playlist rejection,
@@ -714,6 +900,8 @@ frontend/
     mediaUtils.js        Display helpers and browser-local preferences
 setup.py / setup.bat / setup.sh
 run.py / run.bat / run.sh
+build.py / build.bat      Portable Windows Debug/Release builder
+backend/packaged.py       Static frontend, streaming API proxy, packaged launcher
 skill/original-project/  Optional legacy pipeline location
 ```
 
@@ -761,4 +949,5 @@ Starting a legacy conversion requires `skill/original-project/download_rumble.py
 or an `ORIGINAL_PROJECT_DIR` override containing that script. It is absent in this
 checkout, so the backend logs a warning and `POST /api/convert` returns **503**.
 Existing job history remains viewable. Connector-based Library, Watch, and Swipe
-feed work independently of the legacy script.
+feed, including native library transcripts, work independently of the legacy
+script.

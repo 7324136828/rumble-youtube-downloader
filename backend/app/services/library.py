@@ -15,7 +15,7 @@ from pathlib import Path, PurePosixPath
 from .. import config
 from ..connectors import ConnectorCancelled, ConnectorError, registry
 from ..utils import temp_manager
-from . import db, media, video_keywords, watch_later_thumbnails
+from . import db, media, transcripts, video_keywords, watch_later_thumbnails
 
 _ACTIVE: dict[str, dict] = {}
 _CONVERSIONS: dict[tuple[str, str], dict] = {}
@@ -421,6 +421,7 @@ def cancel_and_delete(video_id: str) -> None:
         conversion["thread"].join(timeout=2)
     try:
         with _MEDIA_EDIT_LOCK:
+            transcripts.cancel_transcript(video_id)
             row = db.get_video(video_id)
             if row and row.get("media_dir"):
                 db.preserve_watch_thumbnail(video_id)
@@ -468,6 +469,7 @@ def video_payload(row: dict) -> dict:
         row.get("playback_preference_explicit", False))
     payload["download_url"] = f"/api/media/{video_id}/download"
     payload["keywords"] = db.get_video_keywords(video_id)
+    payload["transcript"] = transcripts.transcript_payload(video_id, include_text=False)
     file_path = row.get("file_path")
     payload["file_name"] = Path(file_path).name if file_path else None
     payload["conversions"] = {

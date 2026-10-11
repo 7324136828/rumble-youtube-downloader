@@ -4,7 +4,6 @@ import logging
 import math
 import re
 import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 from itertools import zip_longest
@@ -13,6 +12,7 @@ from urllib.parse import quote, urlencode, urljoin, urlsplit
 from curl_cffi import CurlOpt, requests
 
 from ..schemas.search import SearchResponse, SearchResult, SearchSource, SearchWarning
+from ..utils.runtime import ytdlp_command
 from . import thumbnail_domains
 
 SEARCH_TIMEOUT = 25
@@ -78,7 +78,7 @@ def _rumble_url(value: str) -> tuple[str, str] | None:
 def search_youtube(query: str, limit: int) -> list[SearchResult]:
     # A child process provides a hard deadline, including extractor retries or
     # hangs. It only requests flat search metadata and cannot download videos.
-    command = [sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-plugin-dirs",
+    command = [*ytdlp_command(), "--ignore-config", "--no-plugin-dirs",
                "--flat-playlist", "--skip-download", "--dump-single-json",
                "--playlist-end", str(limit), "--socket-timeout", "8",
                "--retries", "0", "--extractor-retries", "0", "--no-cache-dir",

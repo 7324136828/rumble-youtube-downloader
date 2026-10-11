@@ -111,6 +111,14 @@ export function startMediaConversion(id, format) {
   return request(`/media/${id}/conversions/${format}`, { method: 'POST' });
 }
 
+export function getMediaTranscript(id, signal) {
+  return request(`/media/${encodeURIComponent(id)}/transcript`, { signal });
+}
+
+export function startMediaTranscript(id) {
+  return request(`/media/${encodeURIComponent(id)}/transcript`, { method: 'POST' });
+}
+
 export function updateMediaPlayback(id, format) {
   return request(`/media/${encodeURIComponent(id)}/playback`, {
     method: 'PATCH', body: JSON.stringify({ format }),
@@ -133,6 +141,14 @@ export function uploadMediaThumbnail(id, thumbnail) {
 
 export function getDownloadSettings(signal) {
   return request('/settings/downloads', { signal });
+}
+
+export function getStorageSettings(signal) {
+  return request('/settings/storage', { signal });
+}
+
+export function updateStorageSettings(settings) {
+  return request('/settings/storage', { method: 'PATCH', body: JSON.stringify(settings) });
 }
 
 export function updateDownloadSettings(settings) {

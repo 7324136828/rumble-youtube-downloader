@@ -7,7 +7,7 @@ const host = document.getElementById('test-root');
 const report = [];
 const warning = 'Automatic conversion is off. This format may not play in your browser; download the original file to use an external player.';
 const video = { id: 'original', title: 'Original video', connector: 'youtube', source_url: 'https://www.youtube.com/watch?v=abcdefghijk', status: 'ready', duration: 120, created_at: '2026-09-20', stream_url: '/tests/player.fixture.webm', download_url: '/tests/player.fixture.webm', playback_warning: warning };
-let root, settings, linkSettings, linkItems, calls, media, loadFailure, saveFailure, recommendationsEnabled, retentionSaveFailure;
+let root, settings, storageSettings, linkSettings, linkItems, calls, media, loadFailure, saveFailure, storageLoadFailure, storageSaveFailure, recommendationsEnabled, retentionSaveFailure;
 Object.defineProperty(HTMLMediaElement.prototype, 'play', { configurable: true, value() { return Promise.resolve(); } });
 Object.defineProperty(HTMLMediaElement.prototype, 'pause', { configurable: true, value() {} });
 window.fetch = async (path, options = {}) => {
@@ -16,7 +16,16 @@ window.fetch = async (path, options = {}) => {
   const body = options.body ? JSON.parse(options.body) : undefined;
   calls.push({ path: url.pathname, method, body });
   let value, error;
-  if (url.pathname === '/api/settings/links') {
+  if (url.pathname === '/api/settings/storage') {
+    if (method === 'PATCH') {
+      if (storageSaveFailure) error = 'Storage folder is not writable';
+      else {
+        const effective = storageSettings.environment_override ? storageSettings.effective_data_root : body.data_root || storageSettings.default_data_root;
+        storageSettings = { ...storageSettings, ...body, effective_data_root: effective, restart_required: effective !== storageSettings.active_data_root };
+      }
+    } else if (storageLoadFailure) error = 'Storage settings unavailable';
+    value = { ...storageSettings };
+  } else if (url.pathname === '/api/settings/links') {
     if (method === 'PATCH') linkSettings = { ...linkSettings, ...body };
     value = { ...linkSettings, items: linkItems.filter((item) => !url.searchParams.get('state') || url.searchParams.get('state') === 'all' || item.state === url.searchParams.get('state')), total: linkItems.length, limit: 200, offset: 0 };
   } else if (url.pathname.startsWith('/api/settings/links/') && method === 'PATCH') {
@@ -91,8 +100,9 @@ async function mount(route = 'settings') {
   await act(async () => root.render(<App />));
 }
 async function test(name, body) {
-  root = null; calls = []; media = []; loadFailure = saveFailure = recommendationsEnabled = retentionSaveFailure = false;
+  root = null; calls = []; media = []; loadFailure = saveFailure = storageLoadFailure = storageSaveFailure = recommendationsEnabled = retentionSaveFailure = false;
   settings = { convert_for_browser: false, generate_thumbnails: true, auto_delete_enabled: true, retention_days: 7, cookie_browser: '', cookie_browser_profile: '', cookie_file: '' };
+  storageSettings = { data_root: null, default_data_root: 'C:\\Temp\\prod_jobs', active_data_root: 'C:\\Temp\\prod_jobs', effective_data_root: 'C:\\Temp\\prod_jobs', settings_path: 'C:\\Users\\User\\AppData\\Roaming\\ClipFeed\\settings.json', restart_required: false, environment_override: false, active_database_path: 'C:\\Temp\\prod_jobs\\videos.db', active_media_root: 'C:\\Temp\\prod_jobs\\media' };
   linkSettings = { hide_repeated_links: true };
   linkItems = [{ id: 1, canonical_id: 'youtube:repeat', source_url: 'https://youtube.com/watch?v=repeat', title: 'Repeated video', provider: 'youtube', state: 'active', seen_count: 2, first_seen_at: '2026-09-20', last_seen_at: '2026-09-21' }];
   localStorage.clear();
@@ -101,6 +111,93 @@ async function test(name, body) {
   finally { if (root) await act(async () => root.unmount()); host.replaceChildren(); }
   document.getElementById('results').textContent = report.map((item) => `${item.passed ? 'PASS' : 'FAIL'} ${item.name}${item.message ? ': ' + item.message : ''}`).join('\n');
 }
+
+const storagePatches = () => calls.filter((call) => call.path === '/api/settings/storage' && call.method === 'PATCH');
+await test('Storage defaults show the active folder and persistent settings file without saving', async () => {
+  await mount();
+  equal(find('#storage-data-root').value, '', 'No override starts as an empty field');
+  equal(find('#storage-data-root').placeholder, storageSettings.default_data_root, 'Default is shown as the placeholder');
+  assert(find('.storage-settings-card').textContent.includes(storageSettings.active_data_root), 'Current storage folder is shown');
+  assert(host.textContent.includes(storageSettings.settings_path), 'Persistent settings file location is shown');
+  assert(host.textContent.includes('Existing media and files are not moved'), 'Switching folder does not silently imply migration');
+  assert(host.textContent.includes('computer running ClipFeed'), 'Folder belongs to the backend computer');
+  assert(button('Save storage folder').disabled, 'Unchanged storage cannot be saved');
+  equal(storagePatches().length, 0, 'Loading storage does not write settings');
+});
+await test('Storage saves are separate from download preferences and remain pending across navigation', async () => {
+  await mount();
+  const nextFolder = 'D:\\ClipFeed Data';
+  await input(find('#storage-data-root'), `  ${nextFolder}  `);
+  equal(storagePatches().length, 0, 'Storage input is a draft');
+  await click(thumbnails());
+  await click(button('Save settings'));
+  equal(storagePatches().length, 0, 'Saving processing preferences never saves storage');
+  equal(find('#storage-data-root').value, `  ${nextFolder}  `, 'Processing save preserves the storage draft');
+  const processingWrites = calls.filter((call) => call.path === '/api/settings/downloads' && call.method === 'PATCH').length;
+  await click(button('Save storage folder'));
+  equal(storagePatches().at(-1).body.data_root, nextFolder, 'Trimmed folder is saved explicitly');
+  equal(Object.keys(storagePatches().at(-1).body).join(','), 'data_root', 'Only the storage preference is sent');
+  equal(calls.filter((call) => call.path === '/api/settings/downloads' && call.method === 'PATCH').length, processingWrites, 'Storage save never writes processing preferences');
+  equal(storageSettings.active_data_root, 'C:\\Temp\\prod_jobs', 'Active folder stays unchanged during the session');
+  assert(host.textContent.includes('Restart ClipFeed to use the saved storage folder'), 'Restart requirement is shown');
+  assert(find('.storage-settings-notice').textContent.includes(nextFolder), 'Next startup folder is shown');
+  await navigate('downloads');
+  await navigate('settings');
+  equal(find('#storage-data-root').value, nextFolder, 'Saved override is restored');
+  assert(host.textContent.includes('Restart ClipFeed to use the saved storage folder'), 'Pending restart survives navigation');
+});
+await test('Use default is an explicit draft reset and blank saves clear the override', async () => {
+  storageSettings = { ...storageSettings, data_root: 'D:\\Existing library', active_data_root: 'D:\\Existing library', effective_data_root: 'D:\\Existing library' };
+  await mount();
+  await click(button('Use default'));
+  equal(find('#storage-data-root').value, '', 'Reset clears the override input');
+  equal(storagePatches().length, 0, 'Reset waits for explicit save');
+  equal(storageSettings.data_root, 'D:\\Existing library', 'Reset does not write before saving');
+  await click(button('Save storage folder'));
+  equal(storagePatches().at(-1).body.data_root, null, 'Default saves a null override');
+  assert(host.textContent.includes('Folder after restart:'), 'Returning to default explains pending folder');
+  await input(find('#storage-data-root'), 'D:\\Another library');
+  await click(button('Save storage folder'));
+  await input(find('#storage-data-root'), '   ');
+  await click(button('Save storage folder'));
+  equal(storagePatches().at(-1).body.data_root, null, 'Whitespace-only input also clears the override');
+});
+await test('Storage failure preserves the folder draft and supports retry', async () => {
+  await mount();
+  await input(find('#storage-data-root'), 'D:\\Library');
+  storageSaveFailure = true;
+  await click(button('Save storage folder'));
+  assert(find('.storage-settings-card').textContent.includes('Storage folder is not writable'), 'Backend validation error is visible');
+  equal(find('#storage-data-root').value, 'D:\\Library', 'Failed draft remains editable');
+  equal(storageSettings.data_root, null, 'Failed save does not alter the setting');
+  storageSaveFailure = false;
+  await click(button('Save storage folder'));
+  equal(storageSettings.data_root, 'D:\\Library', 'Explicit retry saves the same draft');
+  assert(!find('.storage-settings-card').querySelector('[role="alert"]'), 'Retry clears the error');
+});
+await test('Storage load errors are isolated from download settings and can be retried', async () => {
+  storageLoadFailure = true;
+  await mount();
+  assert(find('.storage-settings-card').textContent.includes('Storage settings unavailable'), 'Storage load error is shown in its card');
+  assert(!host.querySelector('#storage-data-root'), 'Unloaded storage cannot be edited');
+  await click(thumbnails());
+  await click(button('Save settings'));
+  equal(settings.generate_thumbnails, false, 'Download preferences still work during storage failure');
+  storageLoadFailure = false;
+  await click(button('Retry storage settings'));
+  equal(find('#storage-data-root').value, '', 'Retry recovers storage preferences');
+});
+await test('JOBS_ROOT priority is explained while still allowing a persistent preference', async () => {
+  storageSettings = { ...storageSettings, active_data_root: 'E:\\Managed library', effective_data_root: 'E:\\Managed library', environment_override: true };
+  await mount();
+  assert(host.textContent.includes('JOBS_ROOT') && host.textContent.includes('takes precedence'), 'Environment override priority is shown');
+  assert(host.textContent.includes('override is removed'), 'User knows when the saved preference will apply');
+  await input(find('#storage-data-root'), 'D:\\Personal library');
+  await click(button('Save storage folder'));
+  equal(storageSettings.data_root, 'D:\\Personal library', 'Preference can be saved while the environment override is active');
+  equal(storageSettings.effective_data_root, 'E:\\Managed library', 'Environment override continues to control startup');
+  assert(!host.textContent.includes('Restart ClipFeed to use the saved storage folder'), 'No misleading pending-folder claim under an unchanged override');
+});
 
 await test('MP4 conversion is off by default and explains direct WebM playback', async () => {
   await mount();

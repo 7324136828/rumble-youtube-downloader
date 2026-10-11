@@ -1,10 +1,36 @@
-"""Persisted options for new library downloads."""
+"""Persisted storage and library download options."""
 from fastapi import APIRouter, HTTPException, Path, Query
 
-from ..schemas.settings import DownloadSettingsPatch, LinkSettingsPatch, LinkStatePatch
+from ..schemas.settings import (DownloadSettingsPatch, LinkSettingsPatch,
+                                LinkStatePatch, StorageSettingsPatch)
 from ..services import db, library, recommendations
+from ..utils import user_settings
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+
+@router.get("/storage")
+def get_storage_settings():
+    try:
+        return user_settings.storage_payload()
+    except (OSError, user_settings.SettingsError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Cannot read storage settings: {exc}. Check the settings JSON and folder permissions."
+        ) from exc
+
+
+@router.patch("/storage")
+def update_storage_settings(body: StorageSettingsPatch):
+    try:
+        return user_settings.update_storage(body.data_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (OSError, user_settings.SettingsError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Cannot save storage settings: {exc}. Check the settings JSON and folder permissions."
+        ) from exc
 
 
 @router.get("/downloads")

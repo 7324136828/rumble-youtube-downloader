@@ -89,6 +89,16 @@ CREATE TABLE IF NOT EXISTS media_conversions (
     completed_at TEXT,
     PRIMARY KEY (video_id, format)
 );
+CREATE TABLE IF NOT EXISTS video_transcripts (
+    video_id TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'idle' CHECK (status IN ('idle','queued','fetching','transcribing','completed','failed')),
+    text_path TEXT,
+    source TEXT CHECK (source IN ('subtitles','whisper')),
+    language TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
 CREATE TABLE IF NOT EXISTS watch_history (
     video_id TEXT PRIMARY KEY,
     source_url TEXT NOT NULL,
@@ -822,6 +832,59 @@ def delete_video(video_id) -> None:
     with _LOCK, _connect() as conn:
         conn.execute("DELETE FROM media_conversions WHERE video_id = ?", (video_id,))
         conn.execute("DELETE FROM videos WHERE id = ?", (video_id,))
+
+
+def get_video_transcript(video_id: str) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT * FROM video_transcripts WHERE video_id=?",
+                           (video_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_video_transcript(video_id: str, status: str = "queued") -> dict:
+    """Begin a fresh transcript attempt without retaining an earlier failure."""
+    if status not in ("idle", "queued", "fetching", "transcribing", "completed", "failed"):
+        raise ValueError("Unknown transcript status.")
+    with _LOCK, _connect() as conn:
+        if conn.execute("SELECT id FROM videos WHERE id=?", (video_id,)).fetchone() is None:
+            raise LookupError("Video not found")
+        conn.execute(
+            "INSERT INTO video_transcripts (video_id,status,created_at) VALUES (?,?,?)"
+            " ON CONFLICT(video_id) DO UPDATE SET status=excluded.status,"
+            " text_path=NULL, source=NULL, language=NULL, error_message=NULL,"
+            " created_at=excluded.created_at, completed_at=NULL",
+            (video_id, status, _now()))
+        row = conn.execute("SELECT * FROM video_transcripts WHERE video_id=?",
+                           (video_id,)).fetchone()
+    return dict(row)
+
+
+def update_video_transcript(video_id: str, **fields) -> dict | None:
+    allowed = {"status", "text_path", "source", "language", "error_message",
+               "created_at", "completed_at"}
+    if fields.keys() - allowed:
+        raise ValueError("Unsupported transcript fields.")
+    if "status" in fields and fields["status"] not in (
+            "idle", "queued", "fetching", "transcribing", "completed", "failed"):
+        raise ValueError("Unknown transcript status.")
+    if "source" in fields and fields["source"] not in (None, "subtitles", "whisper"):
+        raise ValueError("Unknown transcript source.")
+    with _LOCK, _connect() as conn:
+        if fields:
+            columns = ", ".join(f"{key}=?" for key in fields)
+            conn.execute(f"UPDATE video_transcripts SET {columns} WHERE video_id=?",
+                         (*fields.values(), video_id))
+        row = conn.execute("SELECT * FROM video_transcripts WHERE video_id=?",
+                           (video_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def fail_stale_transcripts() -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "UPDATE video_transcripts SET status='failed', error_message=?, completed_at=?"
+            " WHERE status IN ('queued','fetching','transcribing')",
+            ("Server restarted while the transcript was being prepared.", _now()))
 
 
 def upsert_media_conversion(video_id: str, output_format: str,

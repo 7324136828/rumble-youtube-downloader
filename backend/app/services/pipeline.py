@@ -53,7 +53,10 @@ _STAGE_PROGRESS = [
 
 def build_command(job_dir: Path, params: dict) -> list:
     urls_file = job_dir / "inputs" / "urls.json"
-    cmd = [sys.executable, str(config.DOWNLOADER_SCRIPT),
+    prefix = [sys.executable]
+    if getattr(sys, "frozen", False):
+        prefix.append("--convert-script")
+    cmd = [*prefix, str(config.DOWNLOADER_SCRIPT),
            "--url-file", str(urls_file),
            "-o", str(job_dir / "outputs")]
     for key, flag in _VALUE_OPTIONS.items():

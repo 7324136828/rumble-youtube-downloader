@@ -1,13 +1,13 @@
 """Bounded background thumbnail downloads for explicitly saved videos."""
 import logging
 import subprocess
-import sys
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .. import config
+from ..utils.runtime import ytdlp_command
 from . import db
 
 MAX_PENDING = 256
@@ -68,7 +68,7 @@ def _run(key, token, item):
         for candidate in _candidates(item["catalog_id"]):
             candidate.unlink(missing_ok=True)
         output = str(_root() / f"{item['catalog_id']}.%(ext)s")
-        command = [sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-plugin-dirs",
+        command = [*ytdlp_command(), "--ignore-config", "--no-plugin-dirs",
                    "--skip-download", "--write-thumbnail", "--no-playlist", "--no-cache-dir",
                    "--socket-timeout", "8", "--retries", "0", "--extractor-retries", "0",
                    "--quiet", "--no-warnings", "--output", output, "--", item["source_url"]]
