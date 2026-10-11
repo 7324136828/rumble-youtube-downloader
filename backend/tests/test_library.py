@@ -367,6 +367,67 @@ class LibraryTest(unittest.TestCase):
             library.start_download("ftp://nope")
 
 
+class LibraryWaitTest(unittest.TestCase):
+    def test_terminal_row_waits_for_worker_cleanup_and_refreshes_result(self):
+        for status in ("ready", "failed"):
+            with self.subTest(status=status):
+                release = threading.Event()
+                finalized = threading.Event()
+                initial = {"id": "waiting", "status": status}
+                final = {**initial, "title": "Final metadata"}
+
+                def finish_worker():
+                    if release.wait(5):
+                        with library._LOCK:
+                            finalized.set()
+
+                worker = threading.Thread(target=finish_worker, daemon=True)
+                worker.start()
+                join_worker = worker.join
+
+                def release_during_join(timeout):
+                    release.set()
+                    join_worker(timeout)
+
+                try:
+                    with patch.object(db, "get_video", side_effect=lambda video_id:
+                                      final if finalized.is_set() else initial), \
+                            patch.dict(library._ACTIVE, {"waiting": {"thread": worker}}), \
+                            patch.object(worker, "join", side_effect=release_during_join):
+                        result = library.wait_for("waiting", 5)
+                    self.assertTrue(finalized.is_set(), "Returned before worker cleanup")
+                    self.assertIs(result, final)
+                finally:
+                    release.set()
+                    join_worker(5)
+
+    def test_worker_cleanup_respects_timeout(self):
+        release = threading.Event()
+        worker = threading.Thread(target=release.wait, daemon=True)
+        worker.start()
+        row = {"id": "waiting", "status": "ready"}
+        try:
+            with patch.object(db, "get_video", return_value=row), \
+                    patch.dict(library._ACTIVE, {"waiting": {"thread": worker}}):
+                started = time.monotonic()
+                result = library.wait_for("waiting", 0.05)
+                elapsed = time.monotonic() - started
+            self.assertIs(result, row)
+            self.assertTrue(worker.is_alive())
+            self.assertLess(elapsed, 1)
+        finally:
+            release.set()
+            worker.join(5)
+
+    def test_terminal_or_missing_row_without_worker_returns_immediately(self):
+        for row in (None, {"id": "inactive", "status": "ready"}):
+            with self.subTest(row=row), \
+                    patch.object(db, "get_video", return_value=row), \
+                    patch.object(library.time, "sleep") as sleep:
+                self.assertIs(library.wait_for("inactive", 5), row)
+                sleep.assert_not_called()
+
+
 class RetentionSchedulerTest(unittest.TestCase):
     def test_hourly_loop_purges_and_survives_one_cleanup_failure(self):
         class StopAfterThree:
