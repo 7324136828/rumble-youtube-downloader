@@ -536,6 +536,26 @@ sources and Silero VAD dependencies. That optional converter package has not
 been verified here. Whisper's runtime is bundled; model weights download on
 first use and remain separate from application packaging.
 
+### Automated builds and GitHub releases
+
+The [Build and release Windows binaries](.github/workflows/build-release.yml)
+workflow builds on Windows x64 with Python 3.12, Node.js 24, and a checksum-verified
+FFmpeg download. It runs the builder's executable smoke checks, launcher/packaging
+tests, backend tests, and frontend browser tests before uploading the packages.
+
+Pull requests targeting `main` build and upload workflow artifacts. Pushes to
+`main` also publish a GitHub release. To build manually, open **Actions → Build and
+release Windows binaries → Run workflow**; selecting `main` also publishes a
+release, while other branches only upload artifacts. Releases use the built-in
+`GITHUB_TOKEN`; no additional secret is needed.
+
+The release title, tag, and ZIP filenames use the UTC packaging time in
+`{YYYY}.{mm}.{dd}{HH}{mm}` format, for example `2026.10.111430` for October 11, 2026
+at 14:30 UTC. Each release includes `ClipFeed-<version>-windows-x64-Debug.zip`,
+`ClipFeed-<version>-windows-x64-Release.zip`, and `SHA256SUMS.txt`. Extract the
+chosen ZIP and run its `Debug/run.bat` or `Release/run.bat`; keep all bundled files
+together. Workflow artifacts are retained for 14 days.
+
 ### Differences from the sample project
 
 The LAN host defaults, portable Debug/Release profiles, host/port overrides,
