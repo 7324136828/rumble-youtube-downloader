@@ -275,7 +275,7 @@ class PublicationTests(unittest.TestCase):
 
             def resolve_alias(path, *args, **kwargs):
                 if path == output / "Debug":
-                    return output / "Release"
+                    return original(output / "Release", *args, **kwargs)
                 return original(path, *args, **kwargs)
 
             with mock.patch.object(Path, "resolve", new=resolve_alias), mock.patch.object(Path, "rename") as rename:
