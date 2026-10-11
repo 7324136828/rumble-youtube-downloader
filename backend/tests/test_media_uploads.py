@@ -103,7 +103,7 @@ class MediaUploadsTest(unittest.TestCase):
         cls.blue_artwork = _png((0, 0, 255))
 
     def setUp(self):
-        self.folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.folder = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
         self.media_root = self.folder / "library"
         for name, path in (("JOBS_ROOT", self.folder),
                            ("JOBS_DB_PATH", self.folder / "jobs.db"),

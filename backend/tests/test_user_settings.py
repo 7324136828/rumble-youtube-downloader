@@ -15,7 +15,7 @@ from app.utils import user_settings
 
 class UserSettingsTest(unittest.TestCase):
     def setUp(self):
-        self.folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.folder = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
         self.settings_file = self.folder / "config" / "settings.json"
         self.port_mapping = self.folder / "port_mapping.json"
         self.port_mapping.write_text(json.dumps({"frontend_port": 4123, "backend_port": 8010}),

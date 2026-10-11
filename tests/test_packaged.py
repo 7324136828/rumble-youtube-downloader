@@ -254,7 +254,7 @@ print(json.dumps({'root': str(config.JOBS_ROOT), 'database': str(config.JOBS_DB_
             self.assertFalse(Path(paths["settings_path"]).exists())
             self.assertTrue(os.environ["PATH"].startswith(str(root / "bin") + os.pathsep))
             self.assertEqual(os.environ["YTDLP_JS_RUNTIME"], f"node:{root / 'bin' / 'node.exe'}")
-            self.assertEqual(Path(os.environ["ORIGINAL_PROJECT_DIR"]), root / "skill" / "original-project")
+            self.assertEqual(Path(os.environ["ORIGINAL_PROJECT_DIR"]), (root / "skill" / "original-project").resolve())
 
     def test_empty_storage_values_use_temp_defaults_in_each_portable_profile(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -318,13 +318,13 @@ print(json.dumps({'root': str(config.JOBS_ROOT), 'database': str(config.JOBS_DB_
                     root = location / profile
                     root.mkdir()
                     paths = self.configured_paths(root)
-                    self.assertEqual(Path(paths["root"]), selected)
-                    self.assertEqual(Path(paths["database"]), selected / "jobs.db")
-                    self.assertEqual(Path(paths["media"]), selected / "library")
+                    self.assertEqual(Path(paths["root"]), selected.resolve())
+                    self.assertEqual(Path(paths["database"]), (selected / "jobs.db").resolve())
+                    self.assertEqual(Path(paths["media"]), (selected / "library").resolve())
                     self.assertFalse(paths["override"])
                     (root / ".env").write_text("JOBS_ROOT=state/jobs\n", encoding="utf-8")
                     paths = self.configured_paths(root)
-                    self.assertEqual(Path(paths["root"]), root / "state" / "jobs")
+                    self.assertEqual(Path(paths["root"]), (root / "state" / "jobs").resolve())
                     self.assertTrue(paths["override"])
 
     def test_empty_converter_override_uses_stable_fallback_or_bundled_sources(self):
@@ -571,14 +571,14 @@ print(json.dumps({'root': str(config.JOBS_ROOT), 'database': str(config.JOBS_DB_
             with self.running(root, frontend, backend) as client:
                 url = f"http://127.0.0.1:{frontend}"
                 before = client.get(url + "/api/settings/storage").json()
-                self.assertEqual(Path(before["active_data_root"]), initial)
+                self.assertEqual(Path(before["active_data_root"]), initial.resolve())
                 self.assertFalse(before["environment_override"])
                 self.assertFalse(before["restart_required"])
                 self.assertEqual(client.patch(url + "/api/settings/downloads", json={"generate_thumbnails": False}).status_code, 200)
                 saved = client.patch(url + "/api/settings/storage", json={"data_root": str(selected)})
                 self.assertEqual(saved.status_code, 200)
-                self.assertEqual(Path(saved.json()["active_data_root"]), initial)
-                self.assertEqual(Path(saved.json()["effective_data_root"]), selected)
+                self.assertEqual(Path(saved.json()["active_data_root"]), initial.resolve())
+                self.assertEqual(Path(saved.json()["effective_data_root"]), selected.resolve())
                 self.assertTrue(saved.json()["restart_required"])
                 self.assertFalse(client.get(url + "/api/settings/downloads").json()["generate_thumbnails"])
                 self.assertFalse((selected / "jobs.db").exists())
@@ -590,9 +590,9 @@ print(json.dumps({'root': str(config.JOBS_ROOT), 'database': str(config.JOBS_DB_
             with self.running(root, frontend, backend) as client:
                 url = f"http://127.0.0.1:{frontend}"
                 after = client.get(url + "/api/settings/storage").json()
-                self.assertEqual(Path(after["active_data_root"]), selected)
-                self.assertEqual(Path(after["active_database_path"]), selected / "jobs.db")
-                self.assertEqual(Path(after["active_media_root"]), selected / "library")
+                self.assertEqual(Path(after["active_data_root"]), selected.resolve())
+                self.assertEqual(Path(after["active_database_path"]), (selected / "jobs.db").resolve())
+                self.assertEqual(Path(after["active_media_root"]), (selected / "library").resolve())
                 self.assertFalse(after["restart_required"])
                 self.assertTrue(client.get(url + "/api/settings/downloads").json()["generate_thumbnails"])
             self.assertTrue((selected / "jobs.db").is_file())
