@@ -18,19 +18,22 @@ from .connectors import registry
 from .routers.recommendations import router as recommendations_router
 from .routers.settings import router as settings_router
 from .routers.connector import router as connector_router
+from .routers.transcripts import router as transcripts_router
 from .schemas.job import ConvertRequest
 from .schemas.media import (DownloadRequest, MediaPlaybackPatch, ResolveRequest,
                             VideoRetentionPatch)
 from .schemas.search import SearchResponse, SearchSource
 from .schemas.watch_history import WatchEvent
-from .services import (db, library, manual_video_search, media, pipeline, search,
+from .services import (db, library, manual_video_search, media, pipeline, search, transcripts,
                        video_keywords, watch_later_titles, watch_later_expiration, connector_activity, connector_bridge)
 from .utils import temp_manager
+from .utils import user_settings
 
 app = FastAPI(title="Rumble/YouTube Conversion API")
 app.include_router(recommendations_router)
 app.include_router(settings_router)
 app.include_router(connector_router)
+app.include_router(transcripts_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,9 +45,11 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
+    user_settings.ensure_settings_file()
     db.init_db()
     db.fail_stale_jobs()
     db.fail_stale_videos()
+    db.fail_stale_transcripts()
     library.purge_expired()
     watch_later_expiration.purge_expired()
     library.remove_downloaded_watch_later()
@@ -52,13 +57,15 @@ def startup() -> None:
     video_keywords.schedule_missing()
     connector_bridge.start()
     if not config.DOWNLOADER_SCRIPT.is_file():
-        logging.getLogger(__name__).warning(
-            "original-project script not found: %s — /api/convert is disabled",
+        logging.getLogger(__name__).info(
+            "Optional legacy converter is absent at %s; /api/convert is disabled. "
+            "Library downloads and transcripts are available independently.",
             config.DOWNLOADER_SCRIPT)
 
 
 @app.on_event("shutdown")
 def shutdown() -> None:
+    transcripts.shutdown()
     connector_bridge.stop()
     library.stop_retention_scheduler()
     watch_later_titles.shutdown()

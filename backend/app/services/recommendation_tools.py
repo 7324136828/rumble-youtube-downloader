@@ -2,12 +2,12 @@
 import json
 import re
 import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from itertools import zip_longest
 from urllib.parse import parse_qs, urlsplit
 
 from ..schemas.search import SearchResult
+from ..utils.runtime import ytdlp_command
 from . import custom_website_search, recommendation_providers, search
 
 TOOLS = [
@@ -145,13 +145,12 @@ def extract_video_metadata(url: str, guard=lambda: None, providers=None, *, manu
         raise ToolError("Use a public video URL." if manual else
                         "Use an individual video URL from an enabled recommendation website.")
     source, canonical, item_id = normalized
-    command = [sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-plugin-dirs",
+    command = [*ytdlp_command(), "--ignore-config", "--no-plugin-dirs",
+               *(["--impersonate", "chrome"] if source == "rumble" else []),
                "--skip-download", "--no-playlist", "--no-cache-dir", "--socket-timeout", "8",
-               "--ignore-no-formats-error", "--js-runtimes", "node", "--js-runtimes", "deno",
+               "--ignore-no-formats-error",
                "--retries", "0", "--extractor-retries", "0", "--quiet", "--no-warnings",
                "--print", "%(.{id,title,uploader,channel,duration,thumbnail,_type})j", "--", canonical]
-    if source == "rumble":
-        command[3:3] = ["--impersonate", "chrome"]
     guard()
     try:
         process = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",

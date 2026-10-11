@@ -1,0 +1,14 @@
+.storage-settings-card { margin-bottom: 22px; }
+.storage-settings-paths { display: grid; gap: 15px; margin: 24px 0; }
+.storage-settings-paths dt { margin-bottom: 6px; color: #a59baa; font-size: 12px; }
+.storage-settings-paths dd { margin: 0; color: #f5edf8; font-size: 13px; overflow-wrap: anywhere; }
+.storage-settings-notice { display: grid; gap: 7px; margin: 14px 0; padding: 14px 16px; border: 1px solid #55405f; border-radius: 10px; background: #28202f; color: #dccbe5; font-size: 13px; line-height: 1.7; }
+.storage-settings-notice code, .storage-settings-save-note code { overflow-wrap: anywhere; }
+.storage-settings-card form > label { display: block; margin-top: 24px; font-size: 14px; font-weight: 650; }
+.storage-settings-card #storage-folder-help { margin: 8px 0 12px; }
+.storage-settings-input { display: flex; align-items: flex-start; gap: 10px; }
+.storage-settings-input input { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid #5e5268; border-radius: 8px; background: #211b27; color: #f5edf8; font: inherit; }
+.storage-settings-input input:focus-visible { outline: 2px solid #ecb9fc; outline-offset: 4px; }
+.storage-settings-input input:disabled { opacity: .5; cursor: wait; }
+.storage-settings-input button { white-space: nowrap; }
+@media (max-width: 600px) { .storage-settings-input { flex-wrap: wrap; } .storage-settings-input input { flex-basis: 100%; } }

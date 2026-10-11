@@ -1,7 +1,8 @@
 """Environment settings for the productionized backend."""
 import os
-import tempfile
 from pathlib import Path
+
+from .utils import user_settings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ORIGINAL_PROJECT_DIR = Path(
@@ -9,15 +10,16 @@ ORIGINAL_PROJECT_DIR = Path(
 ).resolve()
 DOWNLOADER_SCRIPT = ORIGINAL_PROJECT_DIR / "download_rumble.py"
 
-JOBS_ROOT = Path(
-    os.environ.get("JOBS_ROOT") or Path(tempfile.gettempdir()) / "prod_jobs"
-).resolve()
+JOBS_ROOT_ENV_OVERRIDE = bool(os.environ.get("JOBS_ROOT", "").strip())
+JOBS_ROOT = user_settings.resolve_data_root()
 
 JOBS_DB_PATH = Path(
-    os.environ.get("JOBS_DB_PATH") or JOBS_ROOT / "jobs.db"
-).resolve()
+    os.path.expandvars(os.environ.get("JOBS_DB_PATH", "").strip() or str(JOBS_ROOT / "jobs.db"))
+).expanduser().resolve()
 
-MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT") or JOBS_ROOT / "library").resolve()
+MEDIA_ROOT = Path(os.path.expandvars(
+    os.environ.get("MEDIA_ROOT", "").strip() or str(JOBS_ROOT / "library")
+)).expanduser().resolve()
 MAX_CONCURRENT_DOWNLOADS = max(1, int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "2")))
 MAX_UPLOAD_BYTES = max(1, int(os.environ.get("MAX_UPLOAD_BYTES", str(5 * 1024 ** 3))))
 MAX_THUMBNAIL_BYTES = 10 * 1024 ** 2

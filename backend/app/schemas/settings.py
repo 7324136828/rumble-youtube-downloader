@@ -1,4 +1,4 @@
-"""Preferences for processing, retention, and discovered links."""
+"""Preferences for storage, processing, retention, and discovered links."""
 from pathlib import Path
 from typing import Literal
 
@@ -18,6 +18,19 @@ def normalize_cookie_file_path(value: str) -> str:
     if value and not Path(value).is_absolute():
         raise ValueError("Enter an absolute cookie file path on the computer running the backend.")
     return value
+
+
+class StorageSettingsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    data_root: str | None = Field(max_length=2048)
+
+    @field_validator("data_root")
+    @classmethod
+    def reject_control_characters(cls, value):
+        if value is not None and any(ord(character) < 32 or ord(character) == 127
+                                     for character in value):
+            raise ValueError("Data storage folder cannot contain control characters.")
+        return value
 
 
 class DownloadSettingsPatch(BaseModel):

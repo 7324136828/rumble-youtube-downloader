@@ -1,1 +1,1 @@
-call run_lan.bat --frontend-port 4123 --backend-port 8010
+@call "%~dp0run_lan.bat" --frontend-port 4123 --backend-port 8010 %*
