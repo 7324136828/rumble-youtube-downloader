@@ -480,6 +480,7 @@ dist/
     bin/                  FFmpeg, ffprobe, and Node.js or Deno
     run.bat               Launcher
     runtime.json          Default bind address
+    port_mapping.json     Default frontend and backend ports
 ```
 
 Both profiles contain the same files, with different `runtime.json` host defaults.
@@ -492,15 +493,24 @@ separate Python, Node.js, or FFmpeg installation. Start it with:
 .\dist\Release\run.bat --host 127.0.0.1
 ```
 
-Portable defaults are frontend `3000` and backend `8000`. Both ports must be
-distinct and available; the portable launcher reports an error rather than
-changing them. The frontend streams `/api` requests to the selected backend,
+Both Debug and Release launchers initialize `%APPDATA%\ClipFeed\settings.json`
+before starting the services. If the file is missing, they create `{}`, then fill
+only missing `frontend_port` and `backend_port` fields from `port_mapping.json`
+beside `server.exe`. The builder copies the project's `port_mapping.json` into
+both profiles; its current defaults are frontend `4123` and backend `8010`.
+Existing port values, storage preferences, and other settings are preserved.
+The services reread the saved ports at startup, including when `server.exe` is
+launched directly. Edit the settings file while the app is stopped to change ports
+for subsequent launches. Both ports must be integers from `1` to `65535`, distinct
+and available; invalid configuration or an occupied port stops startup with an
+error. The frontend streams `/api` requests to the selected backend,
 including uploads, video seeking, thumbnails, and downloads. Changing ports
 does not require rebuilding React. Ctrl+C stops both services.
 
 An optional `.env` beside `server.exe` accepts `FRONTEND_PORT`, `BACKEND_PORT`,
 `BACKEND_HOST`, and the normal app settings. Terminal variables override `.env`;
-CLI flags override both. For the host, `runtime.json` supplies the fallback.
+CLI flags override both, and environment values override the saved ports for that
+launch without changing `settings.json`. For the host, `runtime.json` supplies the fallback.
 Data defaults to the operating system's temporary directory under `prod_jobs`,
 including `jobs.db` and the `library` folder (`%TEMP%\prod_jobs` on Windows).
 Development, Debug, and Release use the folder saved in
@@ -743,7 +753,9 @@ the data folder in **Settings**, or edit the file while the app is stopped:
 
 ```json
 {
-  "data_root": "D:\\ClipFeedData"
+  "data_root": "D:\\ClipFeedData",
+  "frontend_port": 4123,
+  "backend_port": 8010
 }
 ```
 
@@ -754,6 +766,11 @@ paths are not rewritten. Keep the original folder to return to its library by
 selecting it again. Other app preferences remain in the SQLite database in that
 data folder. Set `data_root` to `null`, or clear the
 folder in Settings, to use the default.
+
+Portable builds use `frontend_port` and `backend_port` on the next launch. Missing
+port fields are filled from the packaged `port_mapping.json`; saved values stay
+in place across rebuilds. Development `run.bat` continues to use its CLI and
+environment port settings.
 
 The equivalent settings location is `~/Library/Application Support/ClipFeed/settings.json`
 on macOS and `$XDG_CONFIG_HOME/ClipFeed/settings.json` (or

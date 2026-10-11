@@ -14,6 +14,8 @@ import venv
 import uuid
 from pathlib import Path
 
+from backend.app.utils.user_settings import SettingsError, load_port_mapping
+
 ROOT = Path(__file__).resolve().parent
 FRONTEND = ROOT / "frontend"
 BACKEND = ROOT / "backend"
@@ -22,8 +24,9 @@ WORK = ROOT / "build"
 LOCAL_VENV = ROOT / ".venv"
 LOCAL_PYTHON = LOCAL_VENV / "Scripts" / "python.exe"
 APPLICATION = "server"
+PORT_MAPPING = ROOT / "port_mapping.json"
 PROFILES = {"Debug": "127.0.0.1", "Release": "0.0.0.0"}
-ARTIFACTS = ("server.exe", "public", "bin", "run.bat", "runtime.json")
+ARTIFACTS = ("server.exe", "public", "bin", "run.bat", "runtime.json", "port_mapping.json")
 
 LAUNCHER = """@echo off
 setlocal
@@ -31,6 +34,11 @@ if not exist "%~dp0server.exe" (
   echo [run] ERROR: Backend executable is missing. Rebuild with build.bat. 1>&2
   exit /b 1
 )
+if /i "%~1"=="--help" if "%~2"=="" goto launch
+if /i "%~1"=="-h" if "%~2"=="" goto launch
+"%~dp0server.exe" --initialize-settings
+if errorlevel 1 exit /b %ERRORLEVEL%
+:launch
 "%~dp0server.exe" %*
 exit /b %ERRORLEVEL%
 """
@@ -38,6 +46,13 @@ exit /b %ERRORLEVEL%
 
 class BuildError(RuntimeError):
     """Raised when a portable build cannot be completed."""
+
+
+def validate_port_defaults(path: Path) -> None:
+    try:
+        load_port_mapping(path)
+    except SettingsError as error:
+        raise BuildError(f"Invalid port defaults: {error}") from error
 
 
 def checked_path(path: Path, parent: Path) -> Path:
@@ -219,8 +234,9 @@ def pyinstaller_command(
     return command
 
 
-def prepare_artifacts(stage: Path) -> Path:
+def prepare_artifacts(stage: Path, *, defaults_path: Path = PORT_MAPPING) -> Path:
     """Create two portable packages from the shared frontend and executable."""
+    validate_port_defaults(defaults_path)
     packages = stage / "packages"
     checked_path(packages, stage)
     packages.mkdir()
@@ -231,6 +247,7 @@ def prepare_artifacts(stage: Path) -> Path:
         shutil.copy2(stage / "server.exe", package / "server.exe")
         shutil.copytree(stage / "public", package / "public")
         shutil.copytree(stage / "bin", package / "bin")
+        shutil.copy2(defaults_path, package / "port_mapping.json")
         (package / "run.bat").write_text(LAUNCHER, encoding="ascii", newline="\r\n")
         (package / "runtime.json").write_text(
             json.dumps({"host": host}, indent=2) + "\n", encoding="ascii",
@@ -250,6 +267,7 @@ def validate_artifacts(stage: Path, *, host: str) -> None:
         raise BuildError("Portable JavaScript runtime is missing from bin")
     if json.loads((stage / "runtime.json").read_text(encoding="ascii")) != {"host": host}:
         raise BuildError(f"Unexpected runtime defaults in {stage}")
+    validate_port_defaults(stage / "port_mapping.json")
     batch_files = [path.relative_to(stage) for path in stage.rglob("*")
                    if path.is_file() and path.suffix.lower() == ".bat"]
     if batch_files != [Path("run.bat")]:
@@ -333,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
         raise BuildError("Build the Windows executable on Windows")
     if sys.version_info < (3, 10):
         raise BuildError("Python 3.10 or newer is required")
+    validate_port_defaults(PORT_MAPPING)
     npm = shutil.which("npm.cmd")
     if npm is None:
         raise BuildError("Node.js and npm were not found on PATH")
@@ -390,8 +409,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[build] Build files retained for troubleshooting: {stage}")
 
     print(f"\n[build] Ready: {OUTPUT / 'Debug'} (local) and {OUTPUT / 'Release'} (LAN)")
-    print("[build] Local: dist\\Debug\\run.bat --frontend 4000 --backend 9000")
-    print("[build] LAN:   dist\\Release\\run.bat --frontend 4000 --backend 9000")
+    print("[build] Local: dist\\Debug\\run.bat")
+    print("[build] LAN:   dist\\Release\\run.bat")
+    print("[build] Ports: %APPDATA%\\ClipFeed\\settings.json; missing values are filled from port_mapping.json")
     return 0
 
 

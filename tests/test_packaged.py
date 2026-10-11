@@ -83,10 +83,12 @@ print(json.dumps({'root': str(config.JOBS_ROOT), 'database': str(config.JOBS_DB_
         return [sys.executable, "-c", ENTRYPOINT, str(PROJECT_ROOT), str(root), *arguments]
 
     @contextmanager
-    def running(self, root: Path, frontend: int, backend: int):
+    def running(self, root: Path, frontend: int, backend: int, *, arguments: tuple[str, ...] | None = None):
+        if arguments is None:
+            arguments = ("--frontend", str(frontend), "--backend-port", str(backend))
         with tempfile.TemporaryFile(mode="w+b") as log:
             process = subprocess.Popen(
-                self.command(root, "--frontend", str(frontend), "--backend-port", str(backend)),
+                self.command(root, *arguments),
                 cwd=root, env=self.environment(root), stdout=log, stderr=subprocess.STDOUT,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
@@ -120,6 +122,111 @@ print(json.dumps({'root': str(config.JOBS_ROOT), 'database': str(config.JOBS_DB_
         (root / "public").mkdir()
         (root / "public" / "index.html").write_text("<h1>Portable frontend</h1>")
         (root / ".env").write_text("JOBS_ROOT=data/jobs\nJOBS_DB_PATH=data/portable.db\n")
+        self.make_port_mapping(root)
+
+    def make_port_mapping(self, root: Path) -> None:
+        (root / "port_mapping.json").write_text('{"frontend_port": 3000, "backend_port": 8000}',
+                                                encoding="utf-8")
+
+    def test_initialize_settings_exits_before_frontend_checks_listeners_and_app_import(self):
+        root = self.settings_directory / "portable"
+        root.mkdir()
+        self.make_port_mapping(root)
+        environment = self.environment(root)
+        script = ENTRYPOINT.replace(
+            "raise SystemExit(packaged.main(sys.argv[3:]))",
+            "result = packaged.main(sys.argv[3:])\n    "
+            "assert 'app.main' not in sys.modules\n    "
+            "assert 'app.config' not in sys.modules\n    "
+            "raise SystemExit(result)",
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(PROJECT_ROOT), str(root), "--initialize-settings"],
+            env=environment, capture_output=True, text=True, timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        settings = Path(environment["CLIPFEED_SETTINGS_PATH"])
+        self.assertEqual(json.loads(settings.read_text(encoding="utf-8")),
+                         {"frontend_port": 3000, "backend_port": 8000})
+        self.assertFalse((root / "data").exists())
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch.object(packaged, "runtime_directory", return_value=root),
+            patch.object(packaged, "bind_listener") as bind,
+        ):
+            self.assertEqual(packaged.main(["--initialize-settings"]), 0)
+        bind.assert_not_called()
+
+    def test_help_needs_no_port_mapping_and_does_not_create_user_settings(self):
+        completed = subprocess.run(
+            self.command(self.settings_directory, "--help"), env=self.environment(),
+            capture_output=True, text=True, timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("--frontend-port", completed.stdout)
+        self.assertFalse((self.settings_directory / "user-settings").exists())
+
+    def test_saved_ports_environment_and_command_line_precedence(self):
+        root = self.settings_directory
+        self.make_port_mapping(root)
+        environment = self.environment()
+        settings = Path(environment["CLIPFEED_SETTINGS_PATH"])
+        settings.parent.mkdir()
+        settings.write_text('{"frontend_port": 5100, "backend_port": 5200, "other": true}',
+                            encoding="utf-8")
+        before = settings.read_bytes()
+        for overrides, arguments, expected in (
+            ({}, [], (5100, 5200)),
+            ({"FRONTEND_PORT": "6100", "BACKEND_PORT": "6200"}, [], (6100, 6200)),
+            ({"FRONTEND_PORT": "6100", "BACKEND_PORT": "6200"},
+             ["--frontend", "7100", "--backend-port", "7200"], (7100, 7200)),
+            ({"FRONTEND_PORT": "invalid", "BACKEND_PORT": "invalid"},
+             ["--frontend-port", "7100", "--backend", "7200"], (7100, 7200)),
+        ):
+            with self.subTest(overrides=overrides, arguments=arguments), \
+                 patch.dict(os.environ, {**environment, **overrides}, clear=True):
+                options = packaged.parse_args(arguments, defaults_path=root / "port_mapping.json")
+                self.assertEqual((options.frontend_port, options.backend_port), expected)
+                self.assertEqual(settings.read_bytes(), before)
+
+    def test_saved_port_changes_control_both_services_on_restart(self):
+        root = self.settings_directory
+        self.make_public(root)
+        environment = self.environment(root)
+        settings = Path(environment["CLIPFEED_SETTINGS_PATH"])
+        settings.parent.mkdir()
+        for restart in range(2):
+            with self.subTest(restart=restart):
+                frontend, backend = free_ports()
+                saved = {"frontend_port": frontend, "backend_port": backend, "other": "preserved"}
+                settings.write_text(json.dumps(saved), encoding="utf-8")
+                with self.running(root, frontend, backend, arguments=()) as client:
+                    self.assertIn("Portable frontend", client.get(f"http://127.0.0.1:{frontend}").text)
+                    self.assertEqual(client.get(f"http://127.0.0.1:{backend}/api/health").json(),
+                                     {"status": "ok"})
+                self.assertEqual(json.loads(settings.read_text(encoding="utf-8")), saved)
+
+    def test_invalid_settings_stop_startup_without_binding_or_losing_preferences(self):
+        root = self.settings_directory
+        self.make_port_mapping(root)
+        environment = self.environment(root)
+        settings = Path(environment["CLIPFEED_SETTINGS_PATH"])
+        settings.parent.mkdir()
+        for raw in ('{broken', '{"frontend_port": false, "other": "preserved"}'):
+            with self.subTest(raw=raw):
+                settings.write_text(raw, encoding="utf-8")
+                before = settings.read_bytes()
+                with (
+                    patch.dict(os.environ, environment, clear=True),
+                    patch.object(packaged, "runtime_directory", return_value=root),
+                    patch.object(packaged, "bind_listener") as bind,
+                    self.assertRaises(packaged.RunError),
+                ):
+                    packaged.main([])
+                bind.assert_not_called()
+                self.assertEqual(settings.read_bytes(), before)
 
     def test_state_paths_resolve_beside_executable_before_app_import(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, self.environment(), clear=True):
@@ -442,7 +549,8 @@ print(json.dumps({'root': str(config.JOBS_ROOT), 'database': str(config.JOBS_DB_
                 self.assertEqual(client.get(frontend_url + "/%2e%2e/.env").status_code, 404)
             self.assertTrue((root / "data" / "portable.db").is_file())
             settings_file = root / "user-settings" / "settings.json"
-            self.assertEqual(json.loads(settings_file.read_text(encoding="utf-8")), {"data_root": None})
+            self.assertEqual(json.loads(settings_file.read_text(encoding="utf-8")),
+                             {"frontend_port": 3000, "backend_port": 8000})
             frontend, backend = free_ports()
             with self.running(root, frontend, backend) as client:
                 frontend_url = f"http://127.0.0.1:{frontend}"
@@ -476,7 +584,8 @@ print(json.dumps({'root': str(config.JOBS_ROOT), 'database': str(config.JOBS_DB_
                 self.assertFalse((selected / "jobs.db").exists())
             self.assertTrue((initial / "jobs.db").is_file())
             self.assertEqual(json.loads(settings_file.read_text(encoding="utf-8")),
-                             {"data_root": str(selected.resolve()), "unrelated": "preserved"})
+                             {"data_root": str(selected.resolve()), "unrelated": "preserved",
+                              "frontend_port": 3000, "backend_port": 8000})
             frontend, backend = free_ports()
             with self.running(root, frontend, backend) as client:
                 url = f"http://127.0.0.1:{frontend}"
@@ -508,6 +617,7 @@ print(json.dumps({'root': str(config.JOBS_ROOT), 'database': str(config.JOBS_DB_
 
     def test_invalid_and_duplicate_ports_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
+            self.make_port_mapping(Path(directory))
             for arguments in (("--frontend", "0"), ("--backend", "65536"),
                               ("--backend", "abc"), ("--frontend", "8000")):
                 with self.subTest(arguments=arguments):

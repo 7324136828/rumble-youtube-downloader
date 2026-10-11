@@ -119,7 +119,7 @@ def runtime_host(root: Path) -> str:
     return profile["host"]
 
 
-def port_number(value: str) -> int:
+def port_number(value: str | int) -> int:
     try:
         port = int(value)
     except (TypeError, ValueError) as error:
@@ -131,23 +131,45 @@ def port_number(value: str) -> int:
 
 def parse_args(
     argv: list[str] | None = None, *, default_host: str = "0.0.0.0",
+    defaults_path: Path | None = None,
 ) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--frontend", "--frontend-port", dest="frontend_port", type=port_number,
-        default=os.environ.get("FRONTEND_PORT", "3000"),
-        help="frontend port (default: FRONTEND_PORT or 3000)",
+        help="frontend port (default: FRONTEND_PORT or settings.json)",
     )
     parser.add_argument(
         "--backend", "--backend-port", dest="backend_port", type=port_number,
-        default=os.environ.get("BACKEND_PORT", "8000"),
-        help="backend port (default: BACKEND_PORT or 8000)",
+        help="backend port (default: BACKEND_PORT or settings.json)",
     )
     parser.add_argument(
         "--host", default=os.environ.get("BACKEND_HOST", default_host),
         help="bind address for both services (default: BACKEND_HOST or runtime profile)",
     )
+    parser.add_argument("--initialize-settings", action="store_true", help=argparse.SUPPRESS)
     options = parser.parse_args(argv)
+    defaults = {"frontend_port": 3000, "backend_port": 8000}
+    if defaults_path is not None:
+        if not getattr(sys, "frozen", False):
+            backend_path = str(Path(__file__).resolve().parent)
+            if backend_path not in sys.path:
+                sys.path.insert(0, backend_path)
+        from app.utils.user_settings import SettingsError, initialize_port_settings
+
+        try:
+            defaults = initialize_port_settings(defaults_path)
+        except SettingsError as error:
+            raise RunError(str(error)) from error
+    if options.initialize_settings:
+        return options
+    for field, variable in (("frontend_port", "FRONTEND_PORT"), ("backend_port", "BACKEND_PORT")):
+        value = getattr(options, field)
+        if value is None:
+            value = os.environ.get(variable, defaults[field])
+        try:
+            setattr(options, field, port_number(value))
+        except argparse.ArgumentTypeError as error:
+            parser.error(f"{field}: {error}")
     if options.frontend_port == options.backend_port:
         parser.error("frontend and backend ports must be different")
     return options
@@ -334,7 +356,11 @@ def main(argv: list[str] | None = None) -> int:
         return dispatched
     root = runtime_directory()
     load_environment(root)
-    options = parse_args(argv, default_host=runtime_host(root))
+    options = parse_args(
+        argv, default_host=runtime_host(root), defaults_path=root / "port_mapping.json",
+    )
+    if options.initialize_settings:
+        return 0
     public = root / "public"
     if not (public / "index.html").is_file():
         raise RunError(f"Frontend is missing at {public}; rebuild with build.bat")
@@ -343,8 +369,6 @@ def main(argv: list[str] | None = None) -> int:
     frontend_socket: socket.socket | None = None
     try:
         frontend_socket = bind_listener(options.host, options.frontend_port, "frontend")
-        if not getattr(sys, "frozen", False):
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
         backend_url = listener_url(backend_socket)
         frontend_url = listener_url(frontend_socket)
         os.environ["BACKEND_HOST"] = options.host

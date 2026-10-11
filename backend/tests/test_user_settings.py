@@ -17,6 +17,9 @@ class UserSettingsTest(unittest.TestCase):
     def setUp(self):
         self.folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.settings_file = self.folder / "config" / "settings.json"
+        self.port_mapping = self.folder / "port_mapping.json"
+        self.port_mapping.write_text(json.dumps({"frontend_port": 4123, "backend_port": 8010}),
+                                     encoding="utf-8")
         self.default_root = self.folder / "system-temp" / "prod_jobs"
         environment = os.environ.copy()
         for key in ("JOBS_ROOT", "JOBS_DB_PATH", "MEDIA_ROOT"):
@@ -78,6 +81,98 @@ class UserSettingsTest(unittest.TestCase):
         before = self.settings_file.read_bytes()
         user_settings.ensure_settings_file()
         self.assertEqual(self.settings_file.read_bytes(), before)
+
+    def test_port_initialization_creates_empty_json_then_saves_project_defaults(self):
+        with patch.object(user_settings, "_write", wraps=user_settings._write) as write:
+            ports = user_settings.initialize_port_settings(self.port_mapping)
+        self.assertEqual(ports, {"frontend_port": 4123, "backend_port": 8010})
+        self.assertEqual(write.call_args_list[0].args, (self.settings_file, {}))
+        self.assertEqual(write.call_args_list[0].kwargs, {"overwrite": False})
+        self.assertEqual(json.loads(self.settings_file.read_text(encoding="utf-8")), ports)
+        self.assertFalse(self.default_root.exists())
+
+    def test_port_initialization_fills_only_absent_keys_and_preserves_other_preferences(self):
+        # Preserve the raw storage preference, including its spelling and spacing.
+        storage = f'  "{self.folder / "saved"}"  '
+        for saved, expected in (
+            ({}, {"frontend_port": 4123, "backend_port": 8010}),
+            ({"frontend_port": 5100}, {"frontend_port": 5100, "backend_port": 8010}),
+            ({"backend_port": 5200}, {"frontend_port": 4123, "backend_port": 5200}),
+        ):
+            with self.subTest(saved=saved):
+                preferences = {"data_root": storage, "future_option": {"enabled": True}, **saved}
+                self.write_settings(preferences)
+                self.assertEqual(user_settings.initialize_port_settings(self.port_mapping), expected)
+                self.assertEqual(json.loads(self.settings_file.read_text(encoding="utf-8")),
+                                 {**preferences, **expected})
+
+    def test_existing_ports_are_not_rewritten_when_project_defaults_change(self):
+        self.write_settings({"frontend_port": 5100, "backend_port": 5200, "future_option": True})
+        before = self.settings_file.read_bytes()
+        self.port_mapping.write_text('{"frontend_port": 6100, "backend_port": 6200}', encoding="utf-8")
+        self.assertEqual(user_settings.initialize_port_settings(self.port_mapping),
+                         {"frontend_port": 5100, "backend_port": 5200})
+        self.assertEqual(self.settings_file.read_bytes(), before)
+
+    def test_invalid_port_defaults_fail_before_creating_user_settings(self):
+        invalid = ("{", "[]", "{}", '{"frontend_port": 4123}',
+                   '{"frontend_port": 4123, "backend_port": 4123}',
+                   '{"frontend_port": false, "backend_port": 8010}',
+                   '{"frontend_port": "4123", "backend_port": 8010}',
+                   '{"frontend_port": 4123.0, "backend_port": 8010}',
+                   '{"frontend_port": 0, "backend_port": 8010}',
+                   '{"frontend_port": 4123, "backend_port": 65536}')
+        for raw in invalid:
+            with self.subTest(raw=raw):
+                self.port_mapping.write_text(raw, encoding="utf-8")
+                self.assertRaises(user_settings.SettingsError, user_settings.initialize_port_settings,
+                                  self.port_mapping)
+                self.assertFalse(self.settings_file.parent.exists())
+        self.port_mapping.unlink()
+        self.assertRaises(user_settings.SettingsError, user_settings.initialize_port_settings,
+                          self.port_mapping)
+        self.assertFalse(self.settings_file.parent.exists())
+
+    def test_invalid_saved_ports_and_json_are_never_replaced_or_partially_filled(self):
+        self.settings_file.parent.mkdir(parents=True)
+        invalid = (b"{broken", b"[]", b"null", b"\xff",
+                   b'{"frontend_port":null,"other":"preserved"}',
+                   b'{"frontend_port":true,"other":"preserved"}',
+                   b'{"frontend_port":"4123","other":"preserved"}',
+                   b'{"frontend_port":1.5,"other":"preserved"}',
+                   b'{"frontend_port":0,"other":"preserved"}',
+                   b'{"backend_port":65536,"other":"preserved"}',
+                   b'{"frontend_port":8010,"other":"preserved"}',
+                   b'{"frontend_port":5000,"backend_port":5000,"other":"preserved"}')
+        for raw in invalid:
+            with self.subTest(raw=raw):
+                self.settings_file.write_bytes(raw)
+                self.assertRaises(user_settings.SettingsError, user_settings.initialize_port_settings,
+                                  self.port_mapping)
+                self.assertEqual(self.settings_file.read_bytes(), raw)
+
+    def test_port_initialization_rereads_persisted_preferences(self):
+        self.write_settings({"frontend_port": 5100, "other": True})
+        original_write = user_settings._write
+
+        def updated_after_save(path, values, **kwargs):
+            original_write(path, values, **kwargs)
+            self.write_settings({**values, "backend_port": 5300})
+
+        with patch.object(user_settings, "_write", side_effect=updated_after_save):
+            self.assertEqual(user_settings.initialize_port_settings(self.port_mapping),
+                             {"frontend_port": 5100, "backend_port": 5300})
+        self.assertEqual(json.loads(self.settings_file.read_text(encoding="utf-8")),
+                         {"frontend_port": 5100, "backend_port": 5300, "other": True})
+
+    def test_port_update_failure_preserves_previous_preferences_and_cleans_staged_file(self):
+        self.write_settings({"backend_port": 5200, "future_option": True})
+        before = self.settings_file.read_bytes()
+        with patch.object(user_settings.os, "replace", side_effect=PermissionError("blocked")):
+            self.assertRaises(user_settings.SettingsError, user_settings.initialize_port_settings,
+                              self.port_mapping)
+        self.assertEqual(self.settings_file.read_bytes(), before)
+        self.assertEqual(list(self.settings_file.parent.glob(".settings-*.tmp")), [])
 
     def test_saved_folder_survives_reads_and_empty_environment_overrides(self):
         saved = self.folder / "saved media"

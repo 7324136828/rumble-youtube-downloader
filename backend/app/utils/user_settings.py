@@ -55,9 +55,7 @@ def normalize_data_root(value: str | None) -> str | None:
     return str(path.resolve())
 
 
-def _read(path: Path) -> dict:
-    if not path.exists():
-        return {"data_root": None}
+def _read_json_object(path: Path) -> dict:
     try:
         with path.open("rb") as source:
             raw = source.read(_MAX_SETTINGS_BYTES + 1)
@@ -66,16 +64,26 @@ def _read(path: Path) -> dict:
         data = json.loads(raw.decode("utf-8-sig"))
         if not isinstance(data, dict):
             raise SettingsError(f"Settings file must contain a JSON object: {path}")
-        data["data_root"] = normalize_data_root(data.get("data_root"))
         return data
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
         raise SettingsError(f"Cannot read settings at {path}: {error}") from error
 
 
-def _write(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _read(path: Path) -> dict:
+    if not path.exists():
+        return {"data_root": None}
+    data = _read_json_object(path)
+    try:
+        data["data_root"] = normalize_data_root(data.get("data_root"))
+    except ValueError as error:
+        raise SettingsError(f"Cannot read settings at {path}: {error}") from error
+    return data
+
+
+def _write(path: Path, data: dict, *, overwrite: bool = True) -> None:
     staged = None
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         # Stage on the same filesystem so replacing the existing JSON is atomic.
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
                                          dir=path.parent, prefix=".settings-", suffix=".tmp", delete=False) as output:
@@ -84,12 +92,64 @@ def _write(path: Path, data: dict) -> None:
             output.write("\n")
             output.flush()
             os.fsync(output.fileno())
-        os.replace(staged, path)
+        if overwrite:
+            os.replace(staged, path)
+        else:
+            try:
+                if os.name == "nt":
+                    # Windows rename does not replace a file another startup created.
+                    staged.rename(path)
+                else:
+                    os.link(staged, path)
+            except FileExistsError:
+                pass
     except OSError as error:
         raise SettingsError(f"Cannot save settings at {path}: {error}") from error
     finally:
         if staged is not None:
             staged.unlink(missing_ok=True)
+
+
+def validate_port_settings(values: dict, path: Path) -> dict[str, int]:
+    """Require two distinct integer ports without coercing user preferences."""
+    ports = {}
+    for field in ("frontend_port", "backend_port"):
+        if field not in values:
+            raise SettingsError(f"Invalid configuration at {path}: missing {field}")
+        value = values[field]
+        if type(value) is not int or not 1 <= value <= 65535:
+            raise SettingsError(
+                f"Invalid configuration at {path}: {field} must be an integer from 1 to 65535"
+            )
+        ports[field] = value
+    if ports["frontend_port"] == ports["backend_port"]:
+        raise SettingsError(
+            f"Invalid configuration at {path}: frontend_port and backend_port must be different"
+        )
+    return ports
+
+
+def load_port_mapping(path: Path) -> dict[str, int]:
+    """Read the frontend and backend defaults shipped with the application."""
+    return validate_port_settings(_read_json_object(path), path)
+
+
+def initialize_port_settings(defaults_path: Path) -> dict[str, int]:
+    """Fill absent ports, preserve other preferences, and reread the saved JSON."""
+    defaults = load_port_mapping(defaults_path)
+    with _LOCK:
+        path = settings_path()
+        if not path.exists():
+            _write(path, {}, overwrite=False)
+        values = _read_json_object(path)
+        missing = [field for field in defaults if field not in values]
+        for field in missing:
+            values[field] = defaults[field]
+        # An invalid existing port must fail before modifying any preferences.
+        validate_port_settings(values, path)
+        if missing:
+            _write(path, values)
+        return validate_port_settings(_read_json_object(path), path)
 
 
 def read_settings(*, create: bool = False) -> dict:
