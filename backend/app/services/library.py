@@ -57,6 +57,11 @@ def _retention_loop(stop, interval=RETENTION_INTERVAL_SECONDS) -> None:
             purge_expired()
         except Exception:
             _LOG.exception("Scheduled expired-video cleanup failed; it will retry in one hour.")
+        try:
+            from . import watch_later_expiration
+            watch_later_expiration.purge_expired()
+        except Exception:
+            _LOG.exception("Scheduled Watch later cleanup failed; it will retry in one hour.")
 
 
 def start_retention_scheduler() -> None:

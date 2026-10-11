@@ -209,7 +209,7 @@ class RecommendationSettingsTest(unittest.TestCase):
             self.assertEqual(settings, {"enabled": True, "model_id": "saved-model",
                 "seed_keywords": ["wildlife"], "custom_prompt": "", "allow_unverified_links": True, "allow_ai_title_lookup": False,
                 "fetch_all_search_links": False,
-                "providers": default_providers(), "thumbnail_domains": [], "fallback_weights": default_fallback_weights(), "revision": 7})
+                "providers": default_providers(), "thumbnail_domains": [], "watch_later_retention_days": 20, "fallback_weights": default_fallback_weights(), "revision": 7})
             settings["providers"][0]["enabled"] = False
             updated = db.update_recommendation_settings({"providers": settings["providers"]})
             db.init_db()

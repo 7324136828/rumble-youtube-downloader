@@ -24,7 +24,7 @@ from .schemas.media import (DownloadRequest, MediaPlaybackPatch, ResolveRequest,
 from .schemas.search import SearchResponse, SearchSource
 from .schemas.watch_history import WatchEvent
 from .services import (db, library, manual_video_search, media, pipeline, search,
-                       video_keywords, watch_later_titles, connector_activity, connector_bridge)
+                       video_keywords, watch_later_titles, watch_later_expiration, connector_activity, connector_bridge)
 from .utils import temp_manager
 
 app = FastAPI(title="Rumble/YouTube Conversion API")
@@ -46,6 +46,7 @@ def startup() -> None:
     db.fail_stale_jobs()
     db.fail_stale_videos()
     library.purge_expired()
+    watch_later_expiration.purge_expired()
     library.remove_downloaded_watch_later()
     library.start_retention_scheduler()
     video_keywords.schedule_missing()

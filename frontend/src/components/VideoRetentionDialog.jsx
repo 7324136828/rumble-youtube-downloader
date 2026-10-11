@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { updateMediaRetention } from '../services/api';
+import { updateMediaRetention, updateWatchLaterRetention } from '../services/api';
 import Icon from './Icon';
 import './DownloadSettings.css';
 
-export default function VideoRetentionDialog({ video, onClose, onSaved }) {
+export default function VideoRetentionDialog({ video, onClose, onSaved, watchLater = false, defaultPolicy = false, onUpdate }) {
   const [days, setDays] = useState(String(video.retention_days > 0 ? video.retention_days : -1));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -55,7 +55,9 @@ export default function VideoRetentionDialog({ video, onClose, onSaved }) {
     requestRef.current = controller;
     setSaving(true); setError('');
     try {
-      const updated = await updateMediaRetention(video.id, value, controller.signal);
+      const updated = await (onUpdate ? onUpdate(value, controller.signal) : watchLater
+        ? updateWatchLaterRetention(video.catalog_id, value, controller.signal)
+        : updateMediaRetention(video.id, value, controller.signal));
       if (!controller.signal.aborted) onSaved(updated);
     } catch (err) {
       if (!controller.signal.aborted) setError(err.message || 'Could not save this video’s expiration.');
@@ -66,13 +68,13 @@ export default function VideoRetentionDialog({ video, onClose, onSaved }) {
 
   return createPortal(<div className="retention-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
     <section ref={dialogRef} className="retention-modal" role="dialog" aria-modal="true" aria-labelledby="video-retention-modal-heading" aria-describedby="video-retention-modal-title">
-      <header><div><p className="eyebrow">THIS VIDEO</p><h2 id="video-retention-modal-heading">Video expiration</h2><p id="video-retention-modal-title" className="retention-video-title">{title}</p></div><button className="icon-btn" type="button" aria-label="Close video expiration settings" disabled={saving} onClick={close}><Icon name="close" size={18} /></button></header>
+      <header><div><p className="eyebrow">{watchLater ? 'WATCH LATER' : 'THIS VIDEO'}</p><h2 id="video-retention-modal-heading">{watchLater ? defaultPolicy ? 'Default Watch later expiration' : 'Watch later expiration' : 'Video expiration'}</h2><p id="video-retention-modal-title" className="retention-video-title">{title}</p></div><button className="icon-btn" type="button" aria-label="Close video expiration settings" disabled={saving} onClick={close}><Icon name="close" size={18} /></button></header>
       <form onSubmit={save} noValidate>
-        <label htmlFor="video-retention-modal-days">Expire this video after</label>
+        <label htmlFor="video-retention-modal-days">{watchLater ? 'Expire Watch later entries after' : 'Expire this video after'}</label>
         <div className="retention-days-input"><input ref={inputRef} id="video-retention-modal-days" type="number" max="3650" step="1" value={days} onChange={(event) => setDays(event.target.value)} disabled={saving} aria-describedby="video-retention-help" /><span>days</span></div>
-        <p id="video-retention-help">Days are counted from when this download finished. Enter any negative whole number, such as <strong>-1</strong>, to keep this video indefinitely. Zero is not valid.</p>
-        <p>This choice takes priority over the default expiration setting. For an unfinished download, the countdown starts when it completes.</p>
-        <p>Videos past their expiration are removed during cleanup, which runs hourly and when the library is refreshed.</p>
+        <p id="video-retention-help">{watchLater ? 'Days are counted from when the entry was first saved. Entries already saved before this feature start their countdown on upgrade.' : 'Days are counted from when this download finished.'} Enter any negative whole number, such as <strong>-1</strong>, to keep {watchLater ? 'saved entries' : 'this video'} indefinitely. Zero is not valid.</p>
+        <p>{watchLater ? defaultPolicy ? 'This default applies to current and future entries that have no individual expiration setting. Entries with their own setting keep that choice.' : 'This choice takes priority over the default Watch later expiration setting.' : 'This choice takes priority over the default expiration setting. For an unfinished download, the countdown starts when it completes.'}</p>
+        <p>{watchLater ? 'Expired entries and their temporary thumbnails are removed hourly and when Watch later is refreshed. Downloaded files follow their separate Downloads expiration settings.' : 'Videos past their expiration are removed during cleanup, which runs hourly and when the library is refreshed.'}</p>
         {error && <div className="error-banner" role="alert">{error}</div>}
         <footer><button className="btn-secondary" type="button" disabled={saving} onClick={close}>Cancel</button><button className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save expiration'}</button></footer>
       </form>

@@ -14,7 +14,7 @@ const defaultProviders = [
 ];
 const vimeo = { id: 'vimeo.com', name: 'Vimeo', domain: 'vimeo.com', enabled: true };
 const vimeoSuggestion = { ...suggestion, id: 'vimeo.com:123456789', title: 'Vimeo wildlife guide', source_url: 'https://vimeo.com/123456789', connector: 'vimeo.com', verified: false, verification: 'custom_search' };
-let root, settings, models, calls, response, media, watchHistory, failure, modelsFailure, downloadFailure, historyDeleteFailure, pending, pendingPatch, respectVerificationSetting;
+let root, settings, models, calls, response, media, watchHistory, watchLater, failure, modelsFailure, downloadFailure, historyDeleteFailure, pending, pendingPatch, respectVerificationSetting;
 Object.defineProperty(HTMLMediaElement.prototype, 'play', { configurable: true, value() { return Promise.resolve(); } });
 Object.defineProperty(HTMLMediaElement.prototype, 'pause', { configurable: true, value() {} });
 window.fetch = async (path, options = {}) => {
@@ -40,8 +40,21 @@ window.fetch = async (path, options = {}) => {
     value = { domains: ['detected.vimeocdn.com'], page_url: 'https://vimeo.com/search?q=video' };
   } else if (url.pathname === '/api/recommendations') {
     if (failure) error = 'Model could not produce a playlist';
-    value = pending ? await pending : response;
+    value = structuredClone(pending ? await pending : response);
     if (respectVerificationSetting) value = { ...value, items: value.items.filter((item) => settings.allow_unverified_links || item.verified !== false) };
+  } else if (url.pathname === '/api/recommendations/watch-later') {
+    if (method === 'POST') {
+      const items = body.videos.map((video, index) => ({ ...suggestion, ...video, catalog_id: watchLater.length + index + 1,
+        user_added: true, origins: ['watch_later'], title_fetch_status: 'idle' }));
+      watchLater.push(...items);
+      settings.revision++;
+      value = { items, added: items.length, updated: 0, revision: settings.revision };
+    } else value = { items: watchLater, total: watchLater.length };
+  } else if (url.pathname === '/api/recommendations/watch-later/links') value = { items: [], total: 0 };
+  else if (url.pathname.startsWith('/api/recommendations/watch-later/') && method === 'DELETE') {
+    watchLater = watchLater.filter((item) => item.catalog_id !== Number(url.pathname.split('/').at(-1)));
+    settings.revision++;
+    value = { removed: true, revision: settings.revision };
   } else if (url.pathname.startsWith('/api/settings/links/') && method === 'PATCH') {
     value = { id: Number(url.pathname.split('/').at(-1)), state: body.state };
   } else if (url.pathname === '/api/media') {
@@ -88,7 +101,7 @@ async function mountPanel(source) {
 async function test(name, body) {
   settings = { enabled: false, model_id: 'my-config', seed_keywords: [], providers: defaultProviders.map((provider) => ({ ...provider })), allow_unverified_links: false, allow_ai_title_lookup: false, revision: 0 };
   models = [{ id: 'my-config', name: 'My config' }, { id: 'second-model', name: 'Second model' }];
-  calls = []; media = []; watchHistory = [{ video_id: 'watched-youtube', ...suggestion, thumbnail_url: '/api/media/watched-youtube/thumbnail', last_watched_at: '2026-09-20T12:00:00Z', position_seconds: 60 }]; failure = modelsFailure = respectVerificationSetting = historyDeleteFailure = false; downloadFailure = null; pending = pendingPatch = null; root = null;
+  calls = []; media = []; watchLater = []; watchHistory = [{ video_id: 'watched-youtube', ...suggestion, thumbnail_url: '/api/media/watched-youtube/thumbnail', last_watched_at: '2026-09-20T12:00:00Z', position_seconds: 60 }]; failure = modelsFailure = respectVerificationSetting = historyDeleteFailure = false; downloadFailure = null; pending = pendingPatch = null; root = null;
   response = { status: 'ready', items: [suggestion], keywords: ['wildlife'], warnings: [] };
   try { await body(); report.push({ name, passed: true }); }
   catch (error) { report.push({ name, passed: false, message: error.message }); }
@@ -402,7 +415,7 @@ await test('Website names default to the domain and duplicate or video URLs are 
   equal(settings.providers.length, 3, 'Video URL not added as a website');
   assert(host.textContent.includes('Enter a website domain'), 'Domain requirement explained');
 });
-await test('Enabled unverified results render after saving the toggle and hide when turned off', async () => {
+await test('Verification preference changes apply on explicit refresh and preserve current picks', async () => {
   settings.enabled = true;
   settings.providers.push(vimeo);
   response.items = [vimeoSuggestion];
@@ -413,12 +426,18 @@ await test('Enabled unverified results render after saving the toggle and hide w
   const unverifiedControl = () => find('#recommendation-links-heading').closest('section').querySelector('input[role="switch"]');
   await click(unverifiedControl());
   await navigate('feed');
+  equal(posts('/api/recommendations').length, 1, 'Settings change does not regenerate recommendations');
+  equal(host.querySelector('.recommendation-item'), null, 'Original empty playlist remains until refresh');
+  await click(find('[aria-label="Refresh recommendations"]'));
   equal(find('.recommendation-item h3').textContent, vimeoSuggestion.title, 'Fresh unverified result is displayed');
   equal(find('.recommendation-unverified').textContent, 'Unverified link', 'Unverified status remains visible');
   equal(find('.recommendation-item .connector-badge').textContent, 'Vimeo', 'Configured name labels result');
   await navigate('recommendations');
   await click(unverifiedControl());
   await navigate('feed');
+  equal(find('.recommendation-item h3').textContent, vimeoSuggestion.title, 'Current picks remain after preference changes');
+  equal(posts('/api/recommendations').length, 2, 'Returning to the feed does not refresh');
+  await click(find('[aria-label="Refresh recommendations"]'));
   equal(host.querySelector('.recommendation-item'), null, 'Previously displayed unverified item is removed');
 });
 await test('Custom results offer original links and download through the existing queue', async () => {
@@ -475,14 +494,20 @@ await test('Recommendation website filter is optional and offers only enabled pr
   const select = find('select[aria-label="Recommendation websites"]');
   equal([...select.options].map((option) => option.value).join(','), 'all,youtube,vimeo.com', 'Only enabled providers and all websites can be selected');
   response.items = [vimeoSuggestion];
+  const count = posts('/api/recommendations').length;
   await input(select, 'vimeo.com');
+  equal(posts('/api/recommendations').length, count, 'Website selection waits for explicit refresh');
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'Website selection preserves current recommendations');
+  await click(find('[aria-label="Refresh recommendations"]'));
   equal(posts('/api/recommendations').at(-1).body.source, 'vimeo.com', 'Explicit custom selection narrows recommendation source');
   equal(find('.recommendation-item .connector-badge').textContent, 'Vimeo', 'Filtered recommendations shown');
   equal(find('.watch-history-item .connector-badge').textContent, 'YouTube', 'Recommendation filter does not change watched list');
   await input(select, 'all');
+  equal(posts('/api/recommendations').at(-1).body.source, 'vimeo.com', 'Source selection alone does not make another request');
+  await click(find('[aria-label="Refresh recommendations"]'));
   equal(posts('/api/recommendations').at(-1).body.source, 'all', 'All enabled websites restores cross-website discovery');
 });
-await test('Explicit panel source remains scoped and disabled sources never fall back to all', async () => {
+await test('Explicit disabled sources preserve current picks and cannot request new ones', async () => {
   settings.enabled = true;
   settings.providers.push({ ...vimeo, enabled: false });
   await mountPanel('youtube');
@@ -491,10 +516,10 @@ await test('Explicit panel source remains scoped and disabled sources never fall
   const count = posts('/api/recommendations').length;
   await act(async () => root.render(<RecommendationProvider><RecommendationPanel context="history" source="vimeo.com" /></RecommendationProvider>));
   equal(posts('/api/recommendations').length, count, 'Explicit disabled source makes no unscoped recommendation request');
-  assert(find('.recommendation-panel').textContent.includes('Enable Vimeo in recommendation settings'), 'Disabled source explained');
-  equal(host.querySelector('.recommendation-item'), null, 'Results from previous source disappear');
+  assert(find('[aria-label="Refresh recommendations"]').disabled, 'Disabled source cannot refresh');
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'Previously fetched recommendations stay in place');
 });
-await test('A late result cannot replace recommendations after their website filter changes', async () => {
+await test('Pending recommendations are not restarted by website selection', async () => {
   settings.enabled = true;
   settings.providers.push(vimeo);
   let release;
@@ -504,9 +529,138 @@ await test('A late result cannot replace recommendations after their website fil
   pending = null;
   response.items = [vimeoSuggestion];
   await input(find('select[aria-label="Recommendation websites"]'), 'vimeo.com');
+  equal(posts('/api/recommendations').length, 1, 'Website change does not launch an automatic request');
+  assert(!previous.signal.aborted, 'Website selection leaves the initial request running');
   await act(async () => release({ ...response, items: [suggestion] }));
-  assert(previous.signal.aborted, 'Old website request is aborted');
+  await click(find('[aria-label="Refresh recommendations"]'));
+  assert(previous.signal.aborted, 'Explicit refresh retires the old request');
   equal(find('.recommendation-item .connector-badge').textContent, 'Vimeo', 'Late all-websites result cannot overwrite current choice');
+});
+await test('Saving multiple recommendations preserves every card and its order without refreshing settings', async () => {
+  settings.enabled = true;
+  settings.providers.push(vimeo);
+  response.items = [suggestion, vimeoSuggestion];
+  await mount('feed');
+  const cards = [...host.querySelectorAll('.recommendation-item')];
+  const titles = cards.map((card) => card.querySelector('h3').textContent).join('|');
+  const settingsReads = calls.filter((call) => call.path === '/api/recommendations/settings' && call.method === 'GET').length;
+  response.items = [{ ...suggestion, title: 'Unexpected refreshed recommendation' }];
+  await click(find(`[aria-label="Watch later: ${suggestion.title}"]`));
+  await click(find(`[aria-label="Watch later: ${vimeoSuggestion.title}"]`));
+  equal(posts('/api/recommendations').length, 1, 'Saving either card does not generate another playlist');
+  equal(calls.filter((call) => call.path === '/api/recommendations/settings' && call.method === 'GET').length, settingsReads, 'Saving does not reload settings');
+  const after = [...host.querySelectorAll('.recommendation-item')];
+  equal(after.map((card) => card.querySelector('h3').textContent).join('|'), titles, 'All titles and their order are preserved');
+  after.forEach((card, index) => equal(card, cards[index], 'Each original card stays mounted'));
+  assert(find(`[aria-label="Saved for later: ${suggestion.title}"]`).disabled, 'First recommendation is saved');
+  assert(find(`[aria-label="Saved for later: ${vimeoSuggestion.title}"]`).disabled, 'Second recommendation is saved');
+});
+await test('Completed recommendation downloads remain playable after saving and navigation', async () => {
+  settings.enabled = true;
+  await mount('feed');
+  const impressions = () => posts('/api/connector/impressions').length;
+  const initialImpressions = impressions();
+  await click(button('Download'));
+  equal(posts('/api/media').length, 1, 'Recommendation downloaded once');
+  equal(impressions(), initialImpressions, 'Updating playback metadata does not log a new playlist impression');
+  await click(find(`[aria-label="Watch later: ${suggestion.title}"]`));
+  await navigate('watch-later');
+  await navigate('watch-history');
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'Downloaded recommendation stays in the playlist');
+  await click(button('Play'));
+  equal(location.hash, '#watch/downloaded-video', 'Completed download can still be played after navigation');
+  equal(posts('/api/media').length, 1, 'Playing the retained recommendation does not download it again');
+  equal(posts('/api/recommendations').length, 1, 'Downloading, saving, navigating, and playing preserve the playlist');
+});
+await test('Watch later navigation and removals preserve the playlist across Watch and History', async () => {
+  settings.enabled = true;
+  await mount('feed');
+  await click(find(`[aria-label="Watch later: ${suggestion.title}"]`));
+  response.items = [{ ...vimeoSuggestion, title: 'New picks after manual refresh' }];
+  await navigate('watch-later');
+  await click(find(`[aria-label="Remove saved video: ${suggestion.title}"]`));
+  await navigate('watch-history');
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'History reuses the feed playlist');
+  await navigate('feed');
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'Returning from Watch later keeps the original video');
+  media = [{ ...suggestion, id: 'first-current', status: 'ready', stream_url: '/tests/player.fixture.webm' },
+    { ...vimeoSuggestion, id: 'second-current', status: 'ready', stream_url: '/tests/player.fixture.webm' }];
+  await navigate('watch/first-current');
+  await navigate('watch/second-current');
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'Changing the current video keeps the playlist');
+  equal(posts('/api/recommendations').length, 1, 'Navigation, removals, and playback do not generate picks');
+  await click(find('[aria-label="Refresh recommendations"]'));
+  equal(posts('/api/recommendations').length, 2, 'Manual refresh makes one new request');
+  const request = posts('/api/recommendations').at(-1).body;
+  assert(request.refresh, 'Manual refresh bypasses the server playlist cache');
+  equal(request.context, 'watch', 'Refresh uses the current screen');
+  equal(request.video_id, 'second-current', 'Refresh uses the currently watched video');
+  equal(request.exclude_urls.join(','), vimeoSuggestion.source_url, 'Refresh uses current exclusions');
+  equal(find('.recommendation-item h3').textContent, 'New picks after manual refresh', 'Only explicit refresh replaces the original video');
+});
+await test('Model and interest changes preserve the playlist until refresh', async () => {
+  settings.enabled = true;
+  await mount('feed');
+  await navigate('recommendations');
+  await input(find('#recommendation-seeds'), 'Astronomy');
+  await click(button('Save interests'));
+  await input(find('#recommendation-model'), 'second-model');
+  await click(button('Save model'));
+  response.items = [{ ...suggestion, title: 'Updated interests recommendation' }];
+  await navigate('feed');
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'Settings changes retain the original playlist');
+  equal(posts('/api/recommendations').length, 1, 'Settings changes do not make another request');
+  await click(toggle());
+  equal(host.querySelector('.recommendation-panel'), null, 'Disabling hides recommendations');
+  await click(toggle());
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'Reenabling restores the original playlist');
+  equal(posts('/api/recommendations').length, 1, 'Reenabling does not replace existing picks');
+  await click(find('[aria-label="Refresh recommendations"]'));
+  equal(find('.recommendation-item h3').textContent, 'Updated interests recommendation', 'Manual refresh applies updated settings');
+});
+await test('A pending initial playlist survives navigation without a second request', async () => {
+  settings.enabled = true;
+  let release;
+  pending = new Promise((resolve) => { release = resolve; });
+  await mount('feed');
+  const request = posts('/api/recommendations')[0];
+  await navigate('watch-later');
+  assert(!request.signal.aborted, 'Leaving the panel keeps its shared request alive');
+  await act(async () => release(response));
+  pending = null;
+  await navigate('watch-history');
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'The original response is available after navigation');
+  equal(posts('/api/recommendations').length, 1, 'Navigation does not duplicate an in-flight request');
+});
+await test('A failed explicit refresh retains the playlist and only an explicit retry replaces it', async () => {
+  settings.enabled = true;
+  await mount('feed');
+  const card = find('.recommendation-item');
+  failure = true;
+  await click(find('[aria-label="Refresh recommendations"]'));
+  equal(find('.recommendation-item'), card, 'Refresh failure preserves the existing card');
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'Refresh failure preserves existing picks');
+  assert(find('.recommendation-panel [role="alert"]').textContent.includes('Model could not produce'), 'Refresh error is explained');
+  failure = false;
+  response.items = [{ ...suggestion, title: 'Recovered refreshed playlist' }];
+  await navigate('watch-history');
+  equal(posts('/api/recommendations').length, 2, 'Navigation does not retry a failed refresh');
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'Old playlist survives navigation after failure');
+  await click(button('Try again'));
+  equal(posts('/api/recommendations').length, 3, 'An explicit retry makes one new request');
+  equal(find('.recommendation-item h3').textContent, 'Recovered refreshed playlist', 'Explicit retry replaces the playlist');
+});
+await test('Strict mode loads once and preserves recommendations across page remounts', async () => {
+  settings.enabled = true;
+  history.replaceState(null, '', '#feed');
+  root = createRoot(host);
+  await act(async () => root.render(<React.StrictMode><App /></React.StrictMode>));
+  equal(posts('/api/recommendations').length, 1, 'Strict mode does not duplicate the initial playlist request');
+  await navigate('watch-history');
+  equal(find('.recommendation-item h3').textContent, suggestion.title, 'Strict mode remount reuses current picks');
+  equal(posts('/api/recommendations').length, 1, 'Strict mode remount does not regenerate recommendations');
+  await click(find('[aria-label="Refresh recommendations"]'));
+  equal(posts('/api/recommendations').length, 2, 'Explicit refresh makes one request in strict mode');
 });
 await test('No enabled websites explains the setting without starting inference', async () => {
   settings.enabled = true;

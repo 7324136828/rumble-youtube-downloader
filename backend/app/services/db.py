@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS recommendation_settings (
     fetch_all_search_links INTEGER NOT NULL DEFAULT 0,
     providers TEXT,
     thumbnail_domains TEXT NOT NULL DEFAULT '[]',
+    watch_later_retention_days INTEGER NOT NULL DEFAULT 20,
     fallback_weights TEXT,
     revision INTEGER NOT NULL DEFAULT 0
 );
@@ -166,6 +167,10 @@ CREATE TABLE IF NOT EXISTS recommendation_video_origins (
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     occurrence_count INTEGER NOT NULL DEFAULT 1,
+    retention_days INTEGER,
+    retention_override INTEGER NOT NULL DEFAULT 0,
+    retention_started_at TEXT,
+    expires_at TEXT,
     PRIMARY KEY (video_id, origin)
 );
 CREATE TABLE IF NOT EXISTS recommendation_history (
@@ -302,6 +307,22 @@ def init_db() -> None:
             conn.execute("ALTER TABLE recommendation_settings ADD COLUMN providers TEXT")
         if "thumbnail_domains" not in recommendation_columns:
             conn.execute("ALTER TABLE recommendation_settings ADD COLUMN thumbnail_domains TEXT NOT NULL DEFAULT '[]'")
+        if "watch_later_retention_days" not in recommendation_columns:
+            conn.execute("ALTER TABLE recommendation_settings ADD COLUMN watch_later_retention_days INTEGER NOT NULL DEFAULT 20")
+        origin_columns = {row["name"] for row in conn.execute("PRAGMA table_info(recommendation_video_origins)")}
+        for column, declaration in (("retention_days", "INTEGER"),
+                                    ("retention_override", "INTEGER NOT NULL DEFAULT 0"),
+                                    ("retention_started_at", "TEXT"), ("expires_at", "TEXT")):
+            if column not in origin_columns:
+                conn.execute(f"ALTER TABLE recommendation_video_origins ADD COLUMN {column} {declaration}")
+        # Existing entries receive a full countdown on upgrade. This runs once;
+        # restarting the backend must never extend their expiration.
+        started = _now()
+        days = conn.execute("SELECT watch_later_retention_days FROM recommendation_settings WHERE id=1").fetchone()[0]
+        conn.execute("UPDATE recommendation_video_origins SET retention_days=?, retention_started_at=?, expires_at=?"
+                     " WHERE origin='watch_later' AND retention_started_at IS NULL",
+                     (days if days > 0 else None, started, _watch_later_expiration(started, days)))
+        conn.execute("CREATE INDEX IF NOT EXISTS watch_later_expiration ON recommendation_video_origins(origin, expires_at)")
         # Retire provider-owned CDN lists, preserving their union as shared policy.
         row = conn.execute("SELECT providers, thumbnail_domains FROM recommendation_settings WHERE id=1").fetchone()
         if row["providers"] is not None:
@@ -984,6 +1005,7 @@ def _settings_payload(row) -> dict:
             "fetch_all_search_links": bool(row["fetch_all_search_links"]),
             "providers": json.loads(row["providers"]) if row["providers"] is not None else default_providers(),
             "thumbnail_domains": json.loads(row["thumbnail_domains"]) if "thumbnail_domains" in row.keys() else [],
+            "watch_later_retention_days": row["watch_later_retention_days"] if "watch_later_retention_days" in row.keys() else 20,
             "fallback_weights": stored_weights,
             "revision": row["revision"]}
 
@@ -999,10 +1021,13 @@ class SettingsConflictError(ValueError):
 
 
 def update_recommendation_settings(changes: dict, expected_revision: int | None = None) -> dict:
-    allowed = {"enabled", "model_id", "seed_keywords", "custom_prompt", "allow_unverified_links", "allow_ai_title_lookup", "fetch_all_search_links", "providers", "thumbnail_domains", "fallback_weights"}
+    allowed = {"enabled", "model_id", "seed_keywords", "custom_prompt", "allow_unverified_links", "allow_ai_title_lookup", "fetch_all_search_links", "providers", "thumbnail_domains", "watch_later_retention_days", "fallback_weights"}
     if changes.keys() - allowed:
         raise ValueError("Unknown recommendation setting")
     values = dict(changes)
+    if "watch_later_retention_days" in values:
+        values["watch_later_retention_days"] = RecommendationSettingsPatch(
+            watch_later_retention_days=values["watch_later_retention_days"]).watch_later_retention_days
     if "seed_keywords" in values:
         values["seed_keywords"] = json.dumps(values["seed_keywords"])
     if "providers" in values:
@@ -1014,7 +1039,7 @@ def update_recommendation_settings(changes: dict, expected_revision: int | None 
     if "fallback_weights" in values:
         validated = RecommendationSettingsPatch(fallback_weights=values["fallback_weights"])
         values["fallback_weights"] = json.dumps(validated.model_dump()["fallback_weights"])
-    with _LOCK, _connect() as conn:
+    with RETENTION_POLICY_LOCK, _LOCK, _connect() as conn:
         row = conn.execute("SELECT * FROM recommendation_settings WHERE id=1").fetchone()
         if expected_revision is not None and row["revision"] != expected_revision:
             raise SettingsConflictError("Recommendation settings changed. Please try again.")
@@ -1028,6 +1053,14 @@ def update_recommendation_settings(changes: dict, expected_revision: int | None 
         row = conn.execute("SELECT * FROM recommendation_settings WHERE id=1").fetchone()
         if "providers" in values:
             _sync_recommendation_websites(conn, json.loads(values["providers"]))
+        if "watch_later_retention_days" in values:
+            days = values["watch_later_retention_days"]
+            for entry in conn.execute("SELECT video_id, retention_started_at FROM recommendation_video_origins"
+                                      " WHERE origin='watch_later' AND retention_override=0").fetchall():
+                conn.execute("UPDATE recommendation_video_origins SET retention_days=?, expires_at=?"
+                             " WHERE video_id=? AND origin='watch_later'",
+                             (days if days > 0 else None, _watch_later_expiration(entry["retention_started_at"], days),
+                              entry["video_id"]))
     return _settings_payload(row)
 
 
@@ -1112,11 +1145,15 @@ def _catalog_upsert(conn, item, normalized, *, discovery=False):
 
 def _catalog_origin(conn, catalog_id, origin):
     now = _now()
+    days = (conn.execute("SELECT watch_later_retention_days FROM recommendation_settings WHERE id=1").fetchone()[0]
+            if origin == "watch_later" else None)
     conn.execute(
-        "INSERT INTO recommendation_video_origins (video_id, origin, first_seen_at, last_seen_at)"
-        " VALUES (?,?,?,?) ON CONFLICT(video_id, origin) DO UPDATE SET"
+        "INSERT INTO recommendation_video_origins (video_id, origin, first_seen_at, last_seen_at,"
+        " retention_days, retention_started_at, expires_at)"
+        " VALUES (?,?,?,?,?,?,?) ON CONFLICT(video_id, origin) DO UPDATE SET"
         " last_seen_at=excluded.last_seen_at, occurrence_count=occurrence_count+1",
-        (catalog_id, origin, now, now))
+        (catalog_id, origin, now, now, days if days and days > 0 else None,
+         now if origin == "watch_later" else None, _watch_later_expiration(now, days)))
 
 
 def _catalog_payloads(conn, rows):
@@ -1124,10 +1161,15 @@ def _catalog_payloads(conn, rows):
         return []
     placeholders = ",".join("?" for _ in rows)
     origins = {}
+    retention = {}
     for entry in conn.execute(
             f"SELECT * FROM recommendation_video_origins WHERE video_id IN ({placeholders}) ORDER BY origin",
             [row["id"] for row in rows]):
         origins.setdefault(entry["video_id"], []).append(entry["origin"])
+        if entry["origin"] == "watch_later":
+            retention[entry["video_id"]] = {"saved_at": entry["first_seen_at"],
+                "retention_started_at": entry["retention_started_at"], "retention_days": entry["retention_days"],
+                "retention_override": bool(entry["retention_override"]), "expires_at": entry["expires_at"]}
     ready_media = {}
     for entry in conn.execute(
             f"SELECT id, source_url FROM videos WHERE status='ready' AND source_url IN ({placeholders})"
@@ -1149,6 +1191,7 @@ def _catalog_payloads(conn, rows):
              "duration": row["duration"], "view_count": row["view_count"], "uploaded_at": row["uploaded_at"],
              "verified": bool(row["verified"]), "verification": row["verification"],
              "origins": origins.get(row["id"], []), "user_added": "watch_later" in origins.get(row["id"], []),
+             **retention.get(row["id"], {}),
              **{key: row[key] for key in ("discovered_count", "recommended_count", "fallback_count",
                                         "created_at", "updated_at", "last_discovered_at", "last_recommended_at")}}
             for row in rows]
@@ -1176,6 +1219,8 @@ def store_discoveries(items, providers) -> None:
 
 
 def list_catalog_candidates(providers, limit=600) -> list[dict]:
+    from . import watch_later_expiration
+    watch_later_expiration.purge_expired()
     configured = _catalog_providers(providers)
     if type(limit) is not int or not 1 <= limit <= 5000:
         raise ValueError("Catalog limit must be between 1 and 5000.")
@@ -1230,7 +1275,9 @@ def add_watch_later(videos) -> dict:
     """Validate the whole manual import before atomically saving any membership."""
     from .manual_video_urls import normalize_video_url
     validated = WatchLaterImport(videos=videos)
-    with _LOCK, _connect() as conn:
+    from . import watch_later_expiration
+    watch_later_expiration.purge_expired()
+    with RETENTION_POLICY_LOCK, _LOCK, _connect() as conn:
         # The provider snapshot and all memberships commit as one write transaction,
         # including when another application process updates the same database.
         conn.execute("BEGIN IMMEDIATE")
@@ -1261,6 +1308,8 @@ def add_watch_later(videos) -> dict:
             added += int(present is None)
             updated += int(present is not None)
             _catalog_origin(conn, catalog_id, "watch_later")
+            if "retention_days" in item:
+                _set_watch_later_retention(conn, catalog_id, item["retention_days"])
             for key in ("title", "description"):
                 if key in item:
                     conn.execute(f"UPDATE recommendation_videos SET user_{key}=? WHERE id=?", (item[key], catalog_id))
@@ -1276,6 +1325,8 @@ def list_watch_later(source="all", limit=200, offset=0) -> dict:
     if (type(limit) is not int or not 1 <= limit <= 200
             or type(offset) is not int or not 0 <= offset <= 2 ** 63 - 1):
         raise ValueError("Watch-later pagination is invalid.")
+    from . import watch_later_expiration
+    watch_later_expiration.purge_expired()
     where = "o.origin='watch_later'"
     params = []
     if source != "all":
@@ -1470,18 +1521,66 @@ def remove_watch_later_link(link_id) -> dict:
     return {"removed": removed}
 
 
+def _remove_watch_later(conn, catalog_id):
+    removed = conn.execute("DELETE FROM recommendation_video_origins WHERE video_id=? AND origin='watch_later'",
+                           (catalog_id,)).rowcount > 0
+    if removed:
+        conn.execute("UPDATE recommendation_videos SET user_title=NULL, user_description=NULL,"
+                     " title_fetch_status='idle', title_fetch_error=NULL, title_fetch_token=NULL,"
+                     " title_fetch_method=NULL, thumbnail_path=NULL, thumbnail_fetch_status='idle',"
+                     " thumbnail_fetch_error=NULL, thumbnail_fetch_token=NULL, updated_at=? WHERE id=?",
+                     (_now(), catalog_id))
+    return removed
+
+
+def _watch_later_expiration(started, days):
+    return (datetime.fromisoformat(started) + timedelta(days=days)).isoformat() if days and days > 0 else None
+
+
+def _set_watch_later_retention(conn, catalog_id, days):
+    entry = conn.execute("SELECT retention_started_at FROM recommendation_video_origins"
+                         " WHERE video_id=? AND origin='watch_later'", (catalog_id,)).fetchone()
+    if entry is None:
+        return False
+    conn.execute("UPDATE recommendation_video_origins SET retention_days=?, retention_override=1, expires_at=?"
+                 " WHERE video_id=? AND origin='watch_later'",
+                 (days if days > 0 else None, _watch_later_expiration(entry["retention_started_at"], days), catalog_id))
+    return True
+
+
+def update_watch_later_retention(catalog_id, days):
+    from ..schemas.media import VideoRetentionPatch
+    days = VideoRetentionPatch(retention_days=days).retention_days
+    with RETENTION_POLICY_LOCK, _LOCK, _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if not _set_watch_later_retention(conn, catalog_id, days):
+            return None
+        conn.execute("UPDATE recommendation_settings SET revision=revision+1 WHERE id=1")
+        row = conn.execute("SELECT * FROM recommendation_videos WHERE id=?", (catalog_id,)).fetchone()
+        return _catalog_payloads(conn, [row])[0]
+
+
+def expire_watch_later(now=None):
+    """Remove due memberships atomically; return private paths for file cleanup."""
+    with RETENTION_POLICY_LOCK, _LOCK, _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute("SELECT v.id AS catalog_id, v.source_url, v.thumbnail_path"
+                            " FROM recommendation_videos v JOIN recommendation_video_origins o ON o.video_id=v.id"
+                            " WHERE o.origin='watch_later' AND o.retention_days>0"
+                            " AND julianday(o.expires_at)<=julianday(?)", (now or _now(),)).fetchall()
+        for row in rows:
+            _remove_watch_later(conn, row["catalog_id"])
+        if rows:
+            conn.execute("UPDATE recommendation_settings SET revision=revision+1 WHERE id=1")
+        return [dict(row) for row in rows]
+
+
 def remove_watch_later(catalog_id: int) -> dict:
     if type(catalog_id) is not int or not 1 <= catalog_id <= 2 ** 63 - 1:
         raise ValueError("Catalog ID must be a positive SQLite integer.")
-    with _LOCK, _connect() as conn:
-        removed = conn.execute("DELETE FROM recommendation_video_origins WHERE video_id=? AND origin='watch_later'",
-                               (catalog_id,)).rowcount > 0
+    with RETENTION_POLICY_LOCK, _LOCK, _connect() as conn:
+        removed = _remove_watch_later(conn, catalog_id)
         if removed:
-            conn.execute("UPDATE recommendation_videos SET user_title=NULL, user_description=NULL,"
-                         " title_fetch_status='idle', title_fetch_error=NULL, title_fetch_token=NULL,"
-                         " title_fetch_method=NULL, thumbnail_path=NULL, thumbnail_fetch_status='idle',"
-                         " thumbnail_fetch_error=NULL, thumbnail_fetch_token=NULL, updated_at=? WHERE id=?",
-                         (_now(), catalog_id))
             conn.execute("UPDATE recommendation_settings SET revision=revision+1 WHERE id=1")
         revision = conn.execute("SELECT revision FROM recommendation_settings WHERE id=1").fetchone()[0]
         return {"removed": removed, "revision": revision}

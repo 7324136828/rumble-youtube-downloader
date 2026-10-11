@@ -37,16 +37,24 @@ class RecommendationSettingsPatch(BaseModel):
     fetch_all_search_links: bool | None = None
     providers: list[RecommendationProvider] | None = Field(default=None, max_length=12)
     thumbnail_domains: list[str] | None = Field(default=None, max_length=128)
+    watch_later_retention_days: int | None = Field(default=None, le=3650)
     fallback_weights: FallbackWeights | None = None
 
     @model_validator(mode="after")
     def nonnull_preferences(self):
-        for field in ("enabled", "seed_keywords", "custom_prompt", "allow_unverified_links", "allow_ai_title_lookup", "fetch_all_search_links", "providers", "thumbnail_domains", "fallback_weights"):
+        for field in ("enabled", "seed_keywords", "custom_prompt", "allow_unverified_links", "allow_ai_title_lookup", "fetch_all_search_links", "providers", "thumbnail_domains", "watch_later_retention_days", "fallback_weights"):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} cannot be null")
         if self.providers is not None:
             validate_provider_list(self.providers)
         return self
+
+    @field_validator("watch_later_retention_days")
+    @classmethod
+    def nonzero_watch_later_retention(cls, value):
+        if value == 0:
+            raise ValueError("Use 1 to 3650 days, or a negative integer to keep Watch later entries indefinitely.")
+        return -1 if value is not None and value < 0 else value
 
     @field_validator("thumbnail_domains")
     @classmethod
@@ -83,6 +91,14 @@ class WatchLaterVideo(BaseModel):
     source_url: str = Field(min_length=1, max_length=2048)
     title: str | None = Field(default=None, max_length=500)
     description: str | None = Field(default=None, max_length=10000)
+    retention_days: int | None = Field(default=None, le=3650)
+
+    @field_validator("retention_days")
+    @classmethod
+    def nonzero_retention(cls, value):
+        if value is None or value == 0:
+            raise ValueError("Use 1 to 3650 days, or a negative integer to keep this entry indefinitely.")
+        return -1 if value < 0 else value
 
     @field_validator("source_url", "title", "description")
     @classmethod
