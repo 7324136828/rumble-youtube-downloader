@@ -620,12 +620,23 @@ def _run_conversion(video_id: str, output_format: str, source: Path,
 
 
 def wait_for(video_id: str, timeout: float) -> dict | None:
-    deadline = time.time() + timeout
+    """Wait for a terminal row and its worker's final cleanup, up to timeout."""
+    deadline = time.monotonic() + timeout
     row = db.get_video(video_id)
-    while time.time() < deadline:
-        if row is None or row["status"] in ("ready", "failed"):
+    while time.monotonic() < deadline:
+        if row is None:
+            return None
+        if row["status"] in ("ready", "failed"):
+            # The ready row is published before keyword scheduling and Watch
+            # Later cleanup. Keep callers waiting until those side effects end.
+            with _LOCK:
+                entry = _ACTIVE.get(video_id)
+            if entry and entry["thread"] is not threading.current_thread():
+                # The worker also takes _LOCK in finally, so join outside it.
+                entry["thread"].join(timeout=max(0, deadline - time.monotonic()))
+                row = db.get_video(video_id)
             return row
-        time.sleep(0.1)
+        time.sleep(min(0.1, max(0, deadline - time.monotonic())))
         row = db.get_video(video_id)
     return row
 
